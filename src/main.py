@@ -26,7 +26,7 @@ from src.scraping import launch_web, process_single_property, restart_browser, g
 # Local imports - Google services
 from src.google_services import (
     initialize_google_services,
-    get_devm,
+    get_both_devm,
     update_log,
     create_drive_folder,
 )
@@ -39,23 +39,16 @@ from src.google_services import (
 spreadsheet, docs, drive_service = initialize_google_services()
 
 
-def main(target_web, version, run_folder_id, j):
+def main(target_web, version, run_folder_id, j, sheet, devm_lookup):
     """
     Main scraping function for property developments.
+    Uses combined devm_lookup (from both tabs); inserts new rows into the given sheet.
     """
     # Create folders for organizing converted files
     # PO and PR files → Prices folder, RT files → Transactions folder
     prices = create_drive_folder('Prices', parent_id=run_folder_id)
     transactions = create_drive_folder('Transactions', parent_id=run_folder_id)
 
-    # Get development database (version-specific: t18m or non-t18m)
-    devm_df, sheet = get_devm(spreadsheet, version)
-    # Clean up newlines and whitespace from all string values
-    devm_df = devm_df.apply(lambda col: col.map(lambda x: x.replace('\n', '').strip() if isinstance(x, str) else x))
-    
-    # Build lookup index once for O(1) property lookups
-    devm_lookup = build_lookup_index(devm_df)
-    
     # Get download directories based on version
     sales_brochure_files_dir, register_of_transactions_files_dir, price_lists_files_dir = get_download_directories(version, str(BASE_DIR))
 
@@ -82,7 +75,6 @@ def main(target_web, version, run_folder_id, j):
                 target_web=target_web,
                 webload_timeout=WEBLOAD_TIMEOUT,
                 chrome_exe_path=CHROME_EXE_PATH,
-                devm_df=devm_df,
                 devm_lookup=devm_lookup,
                 sheet=sheet,
                 run_folder_id=run_folder_id,
@@ -141,6 +133,11 @@ if __name__ == "__main__":
     folder_name = f"Metric Job - {today_date}"
     folder_id = create_drive_folder(folder_name, parent_id=PARENT_FOLDER_ID)
     
+    # Load both devm tabs and build single combined lookup for comparison
+    sheet_t18m, sheet_non_t18m, combined_df = get_both_devm(spreadsheet)
+    combined_df = combined_df.apply(lambda col: col.map(lambda x: x.replace('\n', '').strip() if isinstance(x, str) else x))
+    devm_lookup = build_lookup_index(combined_df)
+
     # Create subfolder for t18m files
     t18ms_folder_id = create_drive_folder('t18m files', parent_id=folder_id)
     
@@ -150,7 +147,7 @@ if __name__ == "__main__":
     # ============================================================================
     # Scrape t18m properties
     # ============================================================================
-    main(T18M_URL, "t18m", t18ms_folder_id, j=185)
+    main(T18M_URL, "t18m", t18ms_folder_id, j=185, sheet=sheet_t18m, devm_lookup=devm_lookup)
     
     update_log(docs, f"finished t18m\n\n")
     
@@ -159,5 +156,5 @@ if __name__ == "__main__":
     # ============================================================================
     non_t18ms_folder_id = create_drive_folder('non-t18m files', parent_id=folder_id)
     update_log(docs, f"For non-t18m\n\n")
-    main(NON_T18M_URL, "non-t18m", non_t18ms_folder_id, j=1)
+    main(NON_T18M_URL, "non-t18m", non_t18ms_folder_id, j=1, sheet=sheet_non_t18m, devm_lookup=devm_lookup)
     update_log(docs, "finished non-t18m and automation")

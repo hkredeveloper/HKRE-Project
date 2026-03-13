@@ -12,12 +12,6 @@ def create_drive_folder(folder_name, parent_id=None):
     """
     Create a folder in Google Drive.
     
-    Args:
-        folder_name: Name of the folder to create
-        parent_id: Optional parent folder ID
-    
-    Returns:
-        Folder ID string
     """
     creds = _load_creds()
     drive = build("drive", "v3", credentials=creds)
@@ -28,15 +22,44 @@ def create_drive_folder(folder_name, parent_id=None):
     return folder["id"]
 
 
+def find_folder_by_name(parent_id, folder_name, drive_service):
+    """
+    Find a folder by name under a parent. Use to reuse existing folders after script restart.
+    """
+    # Escape single quotes in name for Drive query (double them)
+    name_escaped = str(folder_name).replace("\\", "\\\\").replace("'", "\\'")
+    q = (
+        f"'{parent_id}' in parents and "
+        f"name = '{name_escaped}' and "
+        "mimeType = 'application/vnd.google-apps.folder' and "
+        "trashed = false"
+    )
+    try:
+        result = drive_service.files().list(
+            q=q, fields="files(id)", pageSize=1, supportsAllDrives=True
+        ).execute()
+        files = result.get("files", [])
+        return files[0]["id"] if files else None
+    except Exception:
+        return None
+
+
+def get_or_create_drive_folder(folder_name, parent_id, drive_service):
+    """
+    Get existing folder by name under parent, or create it. Avoids duplicate
+    folders when the script is restarted after a crash (reuses empty folder).
+
+    """
+    existing = find_folder_by_name(parent_id, folder_name, drive_service)
+    if existing is not None:
+        return existing
+    return create_drive_folder(folder_name, parent_id=parent_id)
+
+
 def upload_file_to_gdrive(file_path, filename, drive_service, parent_folder_id=None):
     """
     Upload a file to Google Drive.
     
-    Args:
-        file_path: Local path to the file
-        filename: Name for the file in Drive
-        drive_service: Google Drive service object
-        parent_folder_id: Optional parent folder ID
     """
     file_metadata = {'name': filename}
     if parent_folder_id:

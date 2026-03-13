@@ -44,6 +44,25 @@ def get_devm(spreadsheet, version):
     return df, sheet
 
 
+def get_both_devm(spreadsheet):
+    """
+    Load both devm tabs and return their worksheets plus a combined DataFrame.
+    Used so t18m and non-t18m runs share one combined database for comparison.
+
+    """
+    sheet_t18m = spreadsheet.worksheet("devm t18m")
+    sheet_non_t18m = spreadsheet.worksheet("devm non-t18m")
+
+    values_t18m = sheet_t18m.get_all_values()
+    values_non_t18m = sheet_non_t18m.get_all_values()
+
+    df_t18m = pd.DataFrame(values_t18m).iloc[1:, 2:]
+    df_non_t18m = pd.DataFrame(values_non_t18m).iloc[1:, 2:]
+
+    combined_df = pd.concat([df_t18m, df_non_t18m], ignore_index=True)
+    return sheet_t18m, sheet_non_t18m, combined_df
+
+
 def get_filenames_sheet(spreadsheet):
     """
     Get the 'Filenames' worksheet and return as DataFrame

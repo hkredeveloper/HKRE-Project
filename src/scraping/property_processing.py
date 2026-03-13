@@ -8,7 +8,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from src.extractors.sales_brochure import sales_brochure
 from src.extractors.register_of_transactions import register_of_transactions
 from src.extractors.price_orders import price_orders
-from src.google_services import update_log, create_drive_folder, insert_new_data
+from src.google_services import update_log, create_drive_folder, insert_new_data, get_or_create_drive_folder
 from .browser import launch_web
 from .file_download import download_pdf
 
@@ -89,23 +89,38 @@ def clean_property_data(devm):
     }
 
 
+def normalize_addr_for_lookup(addr):
+    """
+    Normalize address for lookup so that 'Sales suspended' and 'Sales terminated'
+    do not affect matching. Removes these labels and trims whitespace.
+    """
+    if not addr or not isinstance(addr, str):
+        return str(addr).strip() if addr is not None else ''
+    s = str(addr).strip()
+    for label in ('Sales suspended', 'Sales terminated'):
+        if label in s:
+            s = s.replace(label, '')
+    return ' '.join(s.split())
+
+
 def build_lookup_index(devm_df):
     """
     Build a dictionary index from the database DataFrame for O(1) property lookups.
     
-    Key: (name, web, phas, phasnm, addr, area) tuple
+    Key: (name, web, phas, phasnm, addr, area) tuple; addr is normalized (Sales suspended/terminated removed).
     Value: list of all matching rows (to handle duplicates)
     
     Call this once after loading devm_df, then pass the lookup to check_property_in_database.
     """
     lookup = {}
     for _, row in devm_df.iterrows():
+        raw_addr = str(row.iloc[4]).strip()
         key = (
             str(row.iloc[0]).strip(),  # name
             str(row.iloc[1]).strip(),  # web
             str(row.iloc[2]).strip(),  # phas
             str(row.iloc[3]).strip(),  # phasnm
-            str(row.iloc[4]).strip(),  # addr
+            normalize_addr_for_lookup(raw_addr),  # addr (normalized)
             str(row.iloc[5]).strip(),  # area
         )
         if key not in lookup:
@@ -143,13 +158,13 @@ def check_property_in_database(devm_nolines, devm_lookup):
     if not all(v is not None and v != '' for v in critical_values):
         return found, is_new, updates_list, missing_fields
     
-    # Step 1: O(1) lookup by (name, web, phas, phasnm, addr, area)
+    # Step 1: O(1) lookup by (name, web, phas, phasnm, addr, area); addr normalized for comparison
     key = (
         str(devm_nolines.get('name', '')).strip(),
         str(devm_nolines.get('web', '')).strip(),
         str(devm_nolines.get('phas', '')).strip(),
         str(devm_nolines.get('phasnm', '')).strip(),
-        str(devm_nolines.get('addr', '')).strip(),
+        normalize_addr_for_lookup(devm_nolines.get('addr', '')),
         str(devm_nolines.get('area', '')).strip(),
     )
     
@@ -357,7 +372,6 @@ def process_single_property(
     target_web,
     webload_timeout,
     chrome_exe_path,
-    devm_df,
     devm_lookup,
     sheet,
     run_folder_id,
@@ -408,12 +422,13 @@ def process_single_property(
         update_log(docs, f"finished devm {row_index} in {elapsed:.2f} min\n\n")
         return False, driver
 
-    # Only insert/log updates when RT (in DB) changed, or PO or SB changed. If only rt_date/rt_note differ, skip.
-    non_rt_metadata = {'rt_date', 'rt_note'}
+    # Only insert/log updates when there are non-metadata changes.
+    # If ONLY metadata-style notice fields differ, skip downloads and DB insert.
+    metadata_only_fields = {'sb_note', 'sbe_date', 'rt_note', 'rt_date', 'po_note'}
     only_metadata_changed = (
         not is_new
         and missing_fields
-        and all(f in non_rt_metadata for f in missing_fields)
+        and all(f in metadata_only_fields for f in missing_fields)
     )
     if only_metadata_changed:
         driver.back()
@@ -430,11 +445,14 @@ def process_single_property(
         update_log(docs, f"Updates to Existing File: {devm_nolines['name']}\n" + '\n'.join([f'updated {u}' for u in updates_list]) + '\n')
         # Existing property: only download PDFs for missing fields
     
-    # Create property folder (or reuse cached one from a previous timeout retry)
+    # Create property folder (or reuse cached one from a previous timeout retry;
+    # or reuse existing folder by name after script restart to avoid duplicates)
     if devm_nolines['name'] in cached_folder_ids:
         property_folder_id = cached_folder_ids[devm_nolines['name']]
     else:
-        property_folder_id = create_drive_folder(devm_nolines['name'], parent_id=run_folder_id)
+        property_folder_id = get_or_create_drive_folder(
+            devm_nolines['name'], run_folder_id, drive_service
+        )
         cached_folder_ids[devm_nolines['name']] = property_folder_id
 
     # Resume: only download PDFs not yet uploaded (on retry after timeout)
