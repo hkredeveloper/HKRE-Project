@@ -142,19 +142,19 @@ if __name__ == "__main__":
     t18ms_folder_id = create_drive_folder('t18m files', parent_id=folder_id)
     
     # Log scraping start
-    update_log(docs, f"Date of Scrape: {today_date}\nFor t18m\n\n")
+    # update_log(docs, f"Date of Scrape: {today_date}\nFor t18m\n\n")
 
-    # ============================================================================
-    # Scrape t18m properties
-    # ============================================================================
-    main(T18M_URL, "t18m", t18ms_folder_id, j=1, sheet=sheet_t18m, devm_lookup=devm_lookup)
+    # # ============================================================================
+    # # Scrape t18m properties
+    # # ============================================================================
+    # main(T18M_URL, "t18m", t18ms_folder_id, j=1, sheet=sheet_t18m, devm_lookup=devm_lookup)
     
-    update_log(docs, f"finished t18m\n\n")
+    # update_log(docs, f"finished t18m\n\n")
     
     # ============================================================================
     # Scrape non-t18m properties
     # ============================================================================
     non_t18ms_folder_id = create_drive_folder('non-t18m files', parent_id=folder_id)
     update_log(docs, f"For non-t18m\n\n")
-    main(NON_T18M_URL, "non-t18m", non_t18ms_folder_id, j=1, sheet=sheet_non_t18m, devm_lookup=devm_lookup)
+    main(NON_T18M_URL, "non-t18m", non_t18ms_folder_id, j=86, sheet=sheet_non_t18m, devm_lookup=devm_lookup)
     update_log(docs, "finished non-t18m and automation")

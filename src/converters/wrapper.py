@@ -139,7 +139,7 @@ def convert_into(input_path, output_path, output_format='csv', java_options=None
         Nothing. Output file will be saved into `output_path`
     '''
 
-    if output_path is None or len(output_path) is 0:
+    if output_path is None or len(output_path) == 0:
         raise AttributeError("'output_path' shoud not be None or empty")
 
     kwargs['output_path'] = output_path
