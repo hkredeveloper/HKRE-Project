@@ -147,7 +147,7 @@ if __name__ == "__main__":
     # ============================================================================
     # Scrape t18m properties
     # ============================================================================
-    main(T18M_URL, "t18m", t18ms_folder_id, j=185, sheet=sheet_t18m, devm_lookup=devm_lookup)
+    main(T18M_URL, "t18m", t18ms_folder_id, j=1, sheet=sheet_t18m, devm_lookup=devm_lookup)
     
     update_log(docs, f"finished t18m\n\n")
     
