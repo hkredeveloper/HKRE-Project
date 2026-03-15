@@ -166,5 +166,5 @@ if __name__ == "__main__":
     # ============================================================================
     non_t18ms_folder_id = create_drive_folder('non-t18m files', parent_id=folder_id)
     update_log(docs, f"For non-t18m\n\n")
-    main(NON_T18M_URL, "non-t18m", non_t18ms_folder_id, j=161, sheet=sheet_non_t18m, devm_lookup=devm_lookup)
+    main(NON_T18M_URL, "non-t18m", non_t18ms_folder_id, j=215, sheet=sheet_non_t18m, devm_lookup=devm_lookup)
     update_log(docs, "finished non-t18m and automation")
