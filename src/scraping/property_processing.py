@@ -385,6 +385,7 @@ def process_single_property(
     docs,
     cached_folder_ids,
     already_uploaded_pdfs,
+    logged_updates_for_rows=None,
 ):
     """
     Process a single property: extract data, check database, download PDFs.
@@ -396,12 +397,14 @@ def process_single_property(
             - driver: WebDriver instance (may be restarted)
     """
     start_time = time.time()
-    
+    is_retry = logged_updates_for_rows is not None and row_index in logged_updates_for_rows
+
     # Extract property data from table
     devm = extract_property_data(driver, row_index)
     name_cleaned = devm['name'].replace('\n', '')
-    update_log(docs, f"==== Development {row_index} {name_cleaned} begins ====\n")
-    
+    if not is_retry:
+        update_log(docs, f"==== Development {row_index} {name_cleaned} begins ====\n")
+
     # Navigate to property page and extract PDFs
     page_url = driver.find_element("xpath", f"//*[@id='sort_table']/tbody/tr[{row_index}]/td[1]/div/a").get_attribute("href")
     pdfs = navigate_and_extract_pdfs(driver, page_url, webload_timeout, docs, devm)
@@ -436,13 +439,18 @@ def process_single_property(
         update_log(docs, f"finished devm {row_index} in {elapsed:.2f} min\n\n")
         return False, driver
     
-    # Log new or updated property
+    # Log new or updated property (skip long "Updates" log on retry to avoid repetition)
     if is_new:
         update_log(docs, f"New File: {devm_nolines['name']}\n")
         # New property: download all PDFs
         missing_fields = None  # None means download all
     else:
-        update_log(docs, f"Updates to Existing File: {devm_nolines['name']}\n" + '\n'.join([f'updated {u}' for u in updates_list]) + '\n')
+        if logged_updates_for_rows is not None and row_index in logged_updates_for_rows:
+            update_log(docs, f"Retrying row {row_index} ({devm_nolines['name']}) — updates unchanged.\n")
+        else:
+            update_log(docs, f"Updates to Existing File: {devm_nolines['name']}\n" + '\n'.join([f'updated {u}' for u in updates_list]) + '\n')
+            if logged_updates_for_rows is not None:
+                logged_updates_for_rows.add(row_index)
         # Existing property: only download PDFs for missing fields
     
     # Create property folder (or reuse cached one from a previous timeout retry;
@@ -490,6 +498,8 @@ def process_single_property(
     # Clear cached folder and uploaded-PDF set since property completed successfully
     cached_folder_ids.pop(devm_nolines['name'], None)
     already_uploaded_pdfs.clear()
+    if logged_updates_for_rows is not None:
+        logged_updates_for_rows.discard(row_index)
     
     # Return to listing page
     driver.back()

@@ -65,6 +65,7 @@ def main(target_web, version, run_folder_id, j, sheet, devm_lookup):
     tl_loop = time.time()
     cached_folder_ids = {}  # Cache folder IDs to avoid duplicates on timeout retries
     already_uploaded_pdfs = set()  # PDF text keys already uploaded this run; cleared on success, resume on retry
+    logged_updates_for_rows = set()  # Row indices we've already logged "Updates to Existing File" for (avoid repeat on retry)
 
     # Process each property in the listing
     while j <= end:
@@ -88,6 +89,7 @@ def main(target_web, version, run_folder_id, j, sheet, devm_lookup):
                 docs=docs,
                 cached_folder_ids=cached_folder_ids,
                 already_uploaded_pdfs=already_uploaded_pdfs,
+                logged_updates_for_rows=logged_updates_for_rows,
             )
             
             # If timeout occurred, driver was already restarted in process_single_property
@@ -103,15 +105,23 @@ def main(target_web, version, run_folder_id, j, sheet, devm_lookup):
             j += 1
         
         except Exception as e:
+            err_name = type(e).__name__
+            err_msg = str(e).split('\n')[0].strip()
+            if err_name == 'NoSuchElementException':
+                explanation = "The table row or link was not found. The page may have fewer rows than expected, or the page structure may have changed."
+            elif err_name in ('TimeoutException', 'WebDriverException') and 'timeout' in str(e).lower():
+                explanation = "The page or request took too long to respond."
+            elif err_name in ('SSLEOFError', 'SSLError', 'ConnectionError') or 'ssl' in str(e).lower() or 'connection' in str(e).lower():
+                explanation = "The connection to the website or server was dropped unexpectedly."
+            else:
+                explanation = "An unexpected error occurred."
             update_log(
                 docs,
-                f"Ran into error at row {j} due to memory overload\n"
-                f"[DEBUG] Exception detail: {e}\n"
-                "Retrying again...\n\n",
+                f"Error at row {j}: {err_name}: {err_msg}\n"
+                f"({explanation})\n"
+                f"Retrying same row.\n\n",
             )
             time.sleep(3)
-            
-            # Restart browser to recover from memory issues
             driver = restart_browser(driver, target_web, WEBLOAD_TIMEOUT, CHROME_EXE_PATH, delay=3)
             update_log(docs, f"Browser restarted after exception at row {j}. Retrying same row.\n")
             continue
@@ -156,5 +166,5 @@ if __name__ == "__main__":
     # ============================================================================
     non_t18ms_folder_id = create_drive_folder('non-t18m files', parent_id=folder_id)
     update_log(docs, f"For non-t18m\n\n")
-    main(NON_T18M_URL, "non-t18m", non_t18ms_folder_id, j=86, sheet=sheet_non_t18m, devm_lookup=devm_lookup)
+    main(NON_T18M_URL, "non-t18m", non_t18ms_folder_id, j=161, sheet=sheet_non_t18m, devm_lookup=devm_lookup)
     update_log(docs, "finished non-t18m and automation")
