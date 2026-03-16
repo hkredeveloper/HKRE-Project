@@ -190,7 +190,7 @@ def process_single_pdf(
     # Wait for download to complete
     download_complete = wait_for_download(file_path, filename, docs)
     if not download_complete:
-        update_log(docs, f"Download timeout for {filename}. Returning timeout_occurred=True.\n")
+        # Timeout already logged in wait_for_download; just signal timeout upward
         return False, True  # Timeout occurred
 
     # Proceed if file exists
@@ -273,12 +273,8 @@ def download_pdf(
             docs=docs,
         )
 
-        # If timeout occurred, break out of loop
+        # If timeout occurred, break out of loop (timeout already logged)
         if timeout_occurred:
-            update_log(
-                docs,
-                f"timeout_occurred=True for file={filename}. Breaking PDF loop.\n",
-            )
             timeout_download = True
             break
 

@@ -439,16 +439,21 @@ def process_single_property(
         update_log(docs, f"finished devm {row_index} in {elapsed:.2f} min\n\n")
         return False, driver
     
-    # Log new or updated property (skip long "Updates" log on retry to avoid repetition)
+    # Log new or updated property (skip long \"New File\" / \"Updates\" log on retry to avoid repetition)
     if is_new:
-        update_log(docs, f"New File: {devm_nolines['name']}\n")
+        if logged_updates_for_rows is not None and row_index in logged_updates_for_rows:
+            update_log(docs, f"Retrying row {row_index} ({devm_nolines['name']}) — continuing downloads for new file.\\n")
+        else:
+            update_log(docs, f"New File: {devm_nolines['name']}\\n")
+            if logged_updates_for_rows is not None:
+                logged_updates_for_rows.add(row_index)
         # New property: download all PDFs
         missing_fields = None  # None means download all
     else:
         if logged_updates_for_rows is not None and row_index in logged_updates_for_rows:
-            update_log(docs, f"Retrying row {row_index} ({devm_nolines['name']}) — updates unchanged.\n")
+            update_log(docs, f"Retrying row {row_index} ({devm_nolines['name']}) — updates unchanged.\\n")
         else:
-            update_log(docs, f"Updates to Existing File: {devm_nolines['name']}\n" + '\n'.join([f'updated {u}' for u in updates_list]) + '\n')
+            update_log(docs, f"Updates to Existing File: {devm_nolines['name']}\\n" + '\\n'.join([f'updated {u}' for u in updates_list]) + '\\n')
             if logged_updates_for_rows is not None:
                 logged_updates_for_rows.add(row_index)
         # Existing property: only download PDFs for missing fields
@@ -482,13 +487,8 @@ def process_single_property(
         already_uploaded=already_uploaded_pdfs,
     )
     
-    # Restart browser if timeout occurred
+    # Restart browser if timeout occurred (logging already handled at PDF level)
     if timeout_occurred:
-        update_log(
-            docs,
-            f"[DEBUG] process_property_pdfs returned timeout for row {row_index} "
-            f"({devm_nolines['name']}). Restarting browser and retrying same row.\n",
-        )
         driver = restart_browser(driver, target_web, webload_timeout, chrome_exe_path)
         return True, driver
     

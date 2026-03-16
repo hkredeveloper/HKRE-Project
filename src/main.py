@@ -94,10 +94,6 @@ def main(target_web, version, run_folder_id, j, sheet, devm_lookup):
             
             # If timeout occurred, driver was already restarted in process_single_property
             if timeout_occurred:
-                update_log(
-                    docs,
-                    f"Timeout flag received for row {j}. Retrying same row (j unchanged).\n",
-                )
                 time.sleep(2)
                 continue
             
