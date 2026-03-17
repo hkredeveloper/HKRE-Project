@@ -442,18 +442,18 @@ def process_single_property(
     # Log new or updated property (skip long \"New File\" / \"Updates\" log on retry to avoid repetition)
     if is_new:
         if logged_updates_for_rows is not None and row_index in logged_updates_for_rows:
-            update_log(docs, f"Retrying row {row_index} ({devm_nolines['name']}) — continuing downloads for new file.\\n")
+            update_log(docs, f"Retrying row {row_index} ({devm_nolines['name']}) — continuing downloads for new file.\n")
         else:
-            update_log(docs, f"New File: {devm_nolines['name']}\\n")
+            update_log(docs, f"New File: {devm_nolines['name']}\n")
             if logged_updates_for_rows is not None:
                 logged_updates_for_rows.add(row_index)
         # New property: download all PDFs
         missing_fields = None  # None means download all
     else:
         if logged_updates_for_rows is not None and row_index in logged_updates_for_rows:
-            update_log(docs, f"Retrying row {row_index} ({devm_nolines['name']}) — updates unchanged.\\n")
+            update_log(docs, f"Retrying row {row_index} ({devm_nolines['name']}) — updates unchanged.\n")
         else:
-            update_log(docs, f"Updates to Existing File: {devm_nolines['name']}\\n" + '\\n'.join([f'updated {u}' for u in updates_list]) + '\\n')
+            update_log(docs, f"Updates to Existing File: {devm_nolines['name']}\n" + '\n'.join([f'updated {u}' for u in updates_list]) + '\n')
             if logged_updates_for_rows is not None:
                 logged_updates_for_rows.add(row_index)
         # Existing property: only download PDFs for missing fields
