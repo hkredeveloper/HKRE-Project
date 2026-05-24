@@ -2,7 +2,8 @@
 #
 # Repo secrets (Settings → Secrets and variables → Actions → Repository secrets):
 #   EITHER GOOGLE_TOKEN_JSON_B64 — one-line base64 of your local OAuth user JSON (= config/credentials.json),
-#   OR     GOOGLE_TOKEN_JSON     — paste that same JSON (multiline). One token secret is required.
+#   OR paste that JSON verbatim into GOOGLE_TOKEN_JSON — GitHub must receive it escaped; workflow uses toJSON(...)
+#       so curly braces don't break YAML. Easiest workaround: single-line GOOGLE_TOKEN_JSON_B64 only.
 #   GOOGLE_OAUTH_JSON           — OAuth "installed app" client JSON; raw or base64 (needed when access token expires).
 #
 # Credentials mode (recommended for CI):
@@ -40,10 +41,11 @@ jobs:
     env:
       PYTHONUNBUFFERED: "1"
       HKRE_USE_OAUTH_FOR_SHEETS: "1"
-      GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
-      GOOGLE_OAUTH_JSON: ${{ secrets.GOOGLE_OAUTH_JSON }}
-      GOOGLE_TOKEN_JSON_B64: ${{ secrets.GOOGLE_TOKEN_JSON_B64 }}
-      GOOGLE_TOKEN_JSON: ${{ secrets.GOOGLE_TOKEN_JSON }}
+      # toJSON(...) keeps JSON-shaped secrets valid YAML scalars ({ would otherwise parse as YAML flow mapping → empty env).
+      GOOGLE_CREDS_JSON: ${{ toJSON(secrets.GOOGLE_CREDS_JSON || '') }}
+      GOOGLE_OAUTH_JSON: ${{ toJSON(secrets.GOOGLE_OAUTH_JSON || '') }}
+      GOOGLE_TOKEN_JSON_B64: ${{ toJSON(secrets.GOOGLE_TOKEN_JSON_B64 || '') }}
+      GOOGLE_TOKEN_JSON: ${{ toJSON(secrets.GOOGLE_TOKEN_JSON || '') }}
       PARENT_FOLDER_ID: ${{ secrets.PARENT_FOLDER_ID }}
       HKRE_SKIP_METADATA_SHEET_INSERT: "1"
 
@@ -53,9 +55,9 @@ jobs:
 
       - name: Validate secrets for OAuth Sheets mode
         env:
-          TOKEN_B64: ${{ secrets.GOOGLE_TOKEN_JSON_B64 }}
-          TOKEN_JSON: ${{ secrets.GOOGLE_TOKEN_JSON }}
-          CLIENT_JSON: ${{ secrets.GOOGLE_OAUTH_JSON }}
+          TOKEN_B64: ${{ toJSON(secrets.GOOGLE_TOKEN_JSON_B64 || '') }}
+          TOKEN_JSON: ${{ toJSON(secrets.GOOGLE_TOKEN_JSON || '') }}
+          CLIENT_JSON: ${{ toJSON(secrets.GOOGLE_OAUTH_JSON || '') }}
         run: |
           # Safe diagnostics — lengths only (do not echo secret bodies).
           b64_trim=$(echo -n "$TOKEN_B64" | tr -d '[:space:]')
@@ -101,8 +103,8 @@ jobs:
 
       - name: Seed OAuth token (Sheets + Drive)
         env:
-          GOOGLE_TOKEN_JSON: ${{ secrets.GOOGLE_TOKEN_JSON }}
-          GOOGLE_TOKEN_JSON_B64: ${{ secrets.GOOGLE_TOKEN_JSON_B64 }}
+          GOOGLE_TOKEN_JSON: ${{ toJSON(secrets.GOOGLE_TOKEN_JSON || '') }}
+          GOOGLE_TOKEN_JSON_B64: ${{ toJSON(secrets.GOOGLE_TOKEN_JSON_B64 || '') }}
         run: |
           mkdir -p config
           python - <<'PY'
@@ -114,11 +116,8 @@ jobs:
           b64_clean = "".join(b64_in.split())
           path = pathlib.Path("config/credentials.json")
 
-          # Prefer full JSON pasted into GOOGLE_TOKEN_JSON (common mistake: raw JSON stored in *_B64)
-          if raw.strip():
-              path.write_text(raw.lstrip("\ufeff"))
-              print("Seeded credentials from GOOGLE_TOKEN_JSON")
-          elif b64_clean:
+          # Prefer base64 first (single line, fewer GH/YAML quirks). Raw JSON depends on env passing full string.
+          if b64_clean:
               try:
                   decoded = base64.b64decode(b64_clean)
               except Exception as e:
@@ -126,6 +125,9 @@ jobs:
                   sys.exit(1)
               path.write_bytes(decoded)
               print("Seeded credentials from GOOGLE_TOKEN_JSON_B64")
+          elif raw.strip():
+              path.write_text(raw.lstrip("\ufeff"))
+              print("Seeded credentials from GOOGLE_TOKEN_JSON")
           else:
               print(
                   "::error ::No GOOGLE_TOKEN_JSON or GOOGLE_TOKEN_JSON_B64 in job env",
