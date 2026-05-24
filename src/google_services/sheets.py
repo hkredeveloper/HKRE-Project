@@ -2,11 +2,15 @@
 Google Sheets Operations Module
 Handles all interactions with Google Sheets
 """
+import logging
 
 import os
 import pandas as pd
 from datetime import datetime
 from .utils import format_file_size
+
+
+_log = logging.getLogger("hkre.google_services.sheets")
 
 
 def number_to_column_name(n):
@@ -83,7 +87,7 @@ def get_filenames_sheet(spreadsheet):
         df = pd.DataFrame(values[1:], columns=values[0])
         return df, sheet
     except Exception as e:
-        print(f"Error accessing Filenames sheet: {e}")
+        _log.warning("Error accessing Filenames sheet: %s", e)
         # Create empty DataFrame with expected columns
         return pd.DataFrame(columns=['File Name', 'File Size', 'Date Modified', 'Development', 'Devm Type']), None
 
@@ -144,8 +148,8 @@ def add_file_to_database(sheet, filename, file_path, development_name, devm_type
         
         # Insert new row at the top (row 2, after header)
         sheet.insert_row(new_row, 2)
-        print(f"Added {filename} to Filenames database at the top")
-        
+        _log.info("Added %s to Filenames database at the top", filename)
+
     except Exception as e:
-        print(f"Error adding file to database: {e}")
+        _log.warning("Error adding file to database: %s", e)
 

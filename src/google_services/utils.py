@@ -79,31 +79,13 @@ def should_download_file(filename, file_path, filenames_df, development_name):
         return True  # File not in database, should download
     
     # File exists in database, check size
-    print(f"[DEBUG] Checking file: {filename}")
-    print(f"[DEBUG] File path: {file_path}")
-    
     if os.path.exists(file_path):
         current_size = os.path.getsize(file_path)
         current_size_str = format_file_size(current_size)
-        print(f"[DEBUG] Local file exists - Size: {current_size} bytes ({current_size_str})")
-        
-        # Get the recorded size from database
         recorded_size_str = matching_rows.iloc[0]['File Size']
         recorded_size = parse_file_size(recorded_size_str)
-        print(f"[DEBUG] Database recorded size: {recorded_size_str} ({recorded_size} bytes)")
-        
-        # Compare sizes
-        print(f"[DEBUG] Comparing: {current_size} bytes (local) vs {recorded_size} bytes (database)")
         if current_size != recorded_size:
-            print(f"[DEBUG] Size mismatch detected!")
-            print(f"[DEBUG] Decision: RE-DOWNLOAD (size differs: {current_size_str} vs {recorded_size_str})")
-            return True  # Size differs, should re-download
-        else:
-            print(f"[DEBUG] Sizes match!")
-            print(f"[DEBUG] Decision: SKIP DOWNLOAD (same size: {current_size_str})")
-            return False  # Same size, skip download
-    else:
-        print(f"[DEBUG] Local file does NOT exist")
-        print(f"[DEBUG] Decision: DOWNLOAD (file not found locally)")
-        return True  # File doesn't exist locally, should download
+            return True
+        return False
+    return True
 

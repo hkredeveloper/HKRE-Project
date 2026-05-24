@@ -41,7 +41,7 @@ def google_auth():
     creds = service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
 
     client = gspread.authorize(creds)
-    spreadsheet = client.open_by_key("1zFijFdFYINqrNm3HJAPp8g86orQuOZuHxbPTNfPLZK8")
+    spreadsheet = client.open_by_key("1uVNZy9SE1PjtTeaCFl-dZrH4VdLPKen4pcTIbEIMKFE")
     docs = build("docs", "v1", credentials=creds)
     return spreadsheet, docs
 

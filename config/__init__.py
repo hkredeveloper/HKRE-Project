@@ -3,11 +3,15 @@ Configuration module for HKRE App
 """
 from .settings import (
     BASE_DIR,
-    WEBLOAD_TIMEOUT,
-    CHROME_EXE_PATH,
     PARENT_FOLDER_ID,
     T18M_URL,
     NON_T18M_URL,
+    SRPE_SEARCH_API_URL,
+    SRPE_SEARCH_API_URL_T18M,
+    SRPE_API_REFERER,
+    SRPE_API_REFERER_T18M,
+    SRPE_FROM_PATH,
+    SRPE_FROM_PATH_T18M,
     DATA_DIR,
     T18M_DIR,
     NON_T18M_DIR,
@@ -16,14 +20,17 @@ from .settings import (
 
 __all__ = [
     "BASE_DIR",
-    "WEBLOAD_TIMEOUT",
-    "CHROME_EXE_PATH",
     "PARENT_FOLDER_ID",
     "T18M_URL",
     "NON_T18M_URL",
+    "SRPE_SEARCH_API_URL",
+    "SRPE_SEARCH_API_URL_T18M",
+    "SRPE_API_REFERER",
+    "SRPE_API_REFERER_T18M",
+    "SRPE_FROM_PATH",
+    "SRPE_FROM_PATH_T18M",
     "DATA_DIR",
     "T18M_DIR",
     "NON_T18M_DIR",
     "CREDENTIALS_FILE",
 ]
-

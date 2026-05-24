@@ -3,40 +3,21 @@ Configuration settings for HKRE App
 All configuration constants are defined here.
 """
 import os
-import platform
 from pathlib import Path
+from dotenv import load_dotenv
 
 # Base directory (project root)
 BASE_DIR = Path(__file__).parent.parent
 
+# Load .env before reading any configuration values.
+load_dotenv(BASE_DIR / ".env")
+
 # ============================================================================
-# Web Scraping Configuration
+# Reference URLs (disclaimer gates; scraping uses SRPE_* API/search below).
 # ============================================================================
 
-WEBLOAD_TIMEOUT = 5
-
-# Chrome executable path (auto-detect based on OS, or use environment variable)
-def _get_default_chrome_path():
-    """Get default Chrome path based on operating system"""
-    system = platform.system()
-    
-    if system == "Darwin":  # macOS
-        chrome_path = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-        if os.path.exists(chrome_path):
-            return chrome_path
-    elif system == "Linux":
-        chrome_path = "/usr/bin/google-chrome"
-        if os.path.exists(chrome_path):
-            return chrome_path
-    elif system == "Windows":
-        chrome_path = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
-        if os.path.exists(chrome_path):
-            return chrome_path
-    
-    # Fallback: let Selenium find it automatically
-    return None
-
-CHROME_EXE_PATH = os.getenv("CHROME_EXE_PATH") or _get_default_chrome_path()
+T18M_URL = "https://www.srpe.gov.hk/opip/disclaimer_index_for_all_residential_t18m.htm"
+NON_T18M_URL = "https://www.srpe.gov.hk/opip/disclaimer_index_for_all_residential"
 
 # ============================================================================
 # Google Services Configuration
@@ -45,15 +26,37 @@ CHROME_EXE_PATH = os.getenv("CHROME_EXE_PATH") or _get_default_chrome_path()
 # Google Drive parent folder ID
 PARENT_FOLDER_ID = os.getenv(
     "PARENT_FOLDER_ID",
-    "1hixECvWsddWgy94PT0y2OQ_-kysAkvya"
+    "1hixECvWsddWgy94PT0y2OQ_-kysAkvya",
 )
 
 # ============================================================================
-# Target URLs
+# SRPE HTTP API endpoints + Referer / from-path payloads
 # ============================================================================
 
-T18M_URL = "https://www.srpe.gov.hk/opip/disclaimer_index_for_all_residential_t18m.htm"
-NON_T18M_URL = "https://www.srpe.gov.hk/opip/disclaimer_index_for_all_residential.htm"
+SRPE_SEARCH_API_URL = os.getenv(
+    "SRPE_SEARCH_API_URL",
+    "https://www.srpe.gov.hk/api/SrpeWebService/DistrictAreaSearch/getDistrictAreaSearchResult",
+)
+SRPE_SEARCH_API_URL_T18M = os.getenv(
+    "SRPE_SEARCH_API_URL_T18M",
+    "https://www.srpe.gov.hk/api/SrpeWebService/DistrictAreaSearch/getDistrictAreaT18mSearchResult",
+)
+SRPE_API_REFERER = os.getenv(
+    "SRPE_API_REFERER",
+    "https://www.srpe.gov.hk/opip/all_development",
+)
+SRPE_API_REFERER_T18M = os.getenv(
+    "SRPE_API_REFERER_T18M",
+    "https://www.srpe.gov.hk/opip/selected_dev_all_development_t18m",
+)
+SRPE_FROM_PATH = os.getenv(
+    "SRPE_FROM_PATH",
+    "disclaimer_index_for_all_residential",
+)
+SRPE_FROM_PATH_T18M = os.getenv(
+    "SRPE_FROM_PATH_T18M",
+    "disclaimer_index_for_all_residential",
+)
 
 # ============================================================================
 # Directory Paths
@@ -66,4 +69,3 @@ NON_T18M_DIR = DATA_DIR / "non-t18m"
 
 # Credentials file path
 CREDENTIALS_FILE = BASE_DIR / "config" / "credentials.json"
-

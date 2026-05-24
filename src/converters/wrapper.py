@@ -8,6 +8,7 @@ Todo:
 
 '''
 
+import logging
 import io
 import json
 import os
@@ -16,7 +17,9 @@ import subprocess
 import requests
 import pandas as pd
 import numpy as np
-from .util import deprecated_option  
+from .util import deprecated_option
+
+_log = logging.getLogger("hkre.converters.wrapper")  
 
 
 TABULA_JAVA_VERSION = "1.0.2"
@@ -88,12 +91,12 @@ def read_pdf(input_path,
         output = subprocess.check_output(args)
 
     except FileNotFoundError as e:
-        print("Error: {}".format(e))
-        print("Error: {}".format(JAVA_NOT_FOUND_ERROR))
+        _log.error("Tabula-java: Java not found: %s — %s", e, JAVA_NOT_FOUND_ERROR)
         raise
 
     except subprocess.CalledProcessError as e:
-        print("Error: {}".format(e.output.decode(encoding)))
+        out = e.output.decode(encoding) if e.output else str(e)
+        _log.error("Tabula-java subprocess failed: %s", out)
         raise
 
     finally:
@@ -159,12 +162,21 @@ def convert_into(input_path, output_path, output_format='csv', java_options=None
         subprocess.check_output(args)
 
     except FileNotFoundError as e:
-        print("Error: {}".format(e))
-        print("Error: {}".format(JAVA_NOT_FOUND_ERROR))
+        _log.error("Tabula-java convert_into: Java not found: %s — %s", e, JAVA_NOT_FOUND_ERROR)
         raise
 
     except subprocess.CalledProcessError as e:
-        print("Error: {}".format(e.output))
+        out = ""
+        try:
+            if e.output:
+                out = (
+                    e.output.decode("utf-8")
+                    if isinstance(e.output, (bytes, bytearray))
+                    else str(e.output)
+                )
+        except Exception:
+            out = str(e)
+        _log.error("Tabula-java convert_into subprocess failed: %s", out or e)
         raise
 
     finally:
@@ -211,18 +223,18 @@ def convert_into_by_batch(input_dir, output_format='csv', java_options=None, **k
         subprocess.check_output(args)
 
     except FileNotFoundError as e:
-        print("Error: {}".format(e))
-        print("Error: {}".format(JAVA_NOT_FOUND_ERROR))
+        _log.error("Tabula-java batch: Java not found: %s — %s", e, JAVA_NOT_FOUND_ERROR)
         raise
 
     except subprocess.CalledProcessError as e:
-        print("[ERROR] Tabula subprocess failed.")
+        out_msg = "(no subprocess output)"
         try:
-            print(e.output.decode())
+            if e.output:
+                out_msg = e.output.decode() if hasattr(e.output, "decode") else str(e.output)
         except Exception:
-            print("(No output or decoding failed)")
+            out_msg = str(e.output) if getattr(e, "output", None) else str(e)
+        _log.error("Tabula batch subprocess failed: %s", out_msg)
         raise
-
 
 
 def extract_format_for_conversion(output_format='csv'):

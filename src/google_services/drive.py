@@ -3,9 +3,14 @@ Google Drive Operations Module
 Handles file uploads and folder creation in Google Drive
 """
 
+
+import logging
+
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from .auth import _load_creds
+
+_log = logging.getLogger("hkre.google_services.drive")
 
 
 def create_drive_folder(folder_name, parent_id=None):
@@ -71,5 +76,4 @@ def upload_file_to_gdrive(file_path, filename, drive_service, parent_folder_id=N
         media_body=media,
         fields='id'
     ).execute()
-    print(f"Uploaded: {filename} (ID: {file.get('id')})")
-
+    _log.info("Uploaded: %s (ID: %s)", filename, file.get('id'))

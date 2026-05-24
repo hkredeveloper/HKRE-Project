@@ -1,10 +1,10 @@
 # HKRE App
 
-A web scraping application for extracting property development information from Hong Kong government websites (SRPE OPIP). Data is stored in Google Sheets and PDFs are uploaded to Google Drive.
+Pulls Hong Kong SRPE residential development listings and documents via **SRPE HTTP APIs** (`src/scraping/srpe_api.py`), compares against **devm** sheets, uploads PDFs to Google Drive, and converts PO/PR/RT PDFs to CSV (Tabula-Java).
 
 ## Features
 
-- Automated scraping of property developments (**t18m** and **non-t18m**)
+- Automated collection of metadata and PDF links (**t18m** and **non-t18m**) via SRPE HTTP APIs
 - Compares scraped data to existing rows in the **devm** sheet; only downloads PDFs when content (SB, RT, PO) has changed
 - Granular PDF downloads: e.g. only the specific Price Order or Sales Brochure file that changed, not the whole category
 - Register of Transactions (RT): special handling for legacy (no RT in DB) vs. stored RT; RT downloads piggyback when PO or SB changes
@@ -18,8 +18,7 @@ HKRE App/
 ├── config/              # Configuration (settings.py, credentials)
 ├── src/
 │   ├── main.py          # Entry point, run loop
-│   ├── scraping/        # Browser, property processing, file_download
-│   ├── extractors/      # sales_brochure, register_of_transactions, price_orders
+│   ├── scraping/        # SRPE HTTP API (`srpe_api`), property_processing, file_download
 │   ├── google_services/ # Sheets, Drive, Docs, auth
 │   └── converters/      # PDF to CSV (Tabula wrapper)
 ├── data/                # Local download dirs (t18m / non-t18m)
@@ -37,8 +36,7 @@ HKRE App/
 2. **Prerequisites**
    - **Python 3.9+**
    - **Java** (for Tabula-Java PDF→CSV)
-   - **Google Chrome**
-   - Google API credentials: place `credentials.json` in `config/` (or set path in config). Use `.env` for optional overrides (e.g. `CHROME_EXE_PATH`).
+   - Google API credentials: place `credentials.json` in `config/` (or adjust `CREDENTIALS_FILE` in `settings.py`). Optional: `.env` for `PARENT_FOLDER_ID` and other overrides.
 
 3. **Run**
    From project root:
@@ -52,12 +50,13 @@ HKRE App/
 
 ## Configuration
 
-- `config/settings.py` — timeouts, Chrome path, URLs (T18M / non-T18M), data dir, credentials path.
-- Environment: copy `.env.example` to `.env` if you use one; credentials and run folder IDs are typically set there or in code.
+- `config/settings.py` — SRPE API endpoints/referers, data dirs, credentials path, `PARENT_FOLDER_ID`.
+- Environment: `.env` is loaded automatically when present (`python-dotenv`).
+- **`HKRE_SKIP_METADATA_SHEET_INSERT`:** omit or set **`1`** to skip spreadsheet prepends when only metadata/note/date columns drift; set **`0`** if you still want those cells refreshed (prepend at row 2).
+- **GitHub Actions:** `.github/workflows/hkre_scraper.yml` — use **Run workflow**, or the weekly `schedule` (change the cron). Add the repository secrets named in the YAML header comment.
 
 ## Requirements (requirements.txt)
 
-- **Web:** selenium, selenium-stealth  
 - **Data:** pandas, numpy  
 - **Google:** google-api-python-client, google-auth*, gspread  
 - **Other:** requests, python-dotenv  

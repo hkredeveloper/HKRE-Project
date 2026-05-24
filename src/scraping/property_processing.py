@@ -1,92 +1,15 @@
 """
 Property Processing Module
-Handles extraction, validation, and processing of property developments
+Validation, devm lookup indexing, and HTTP PDF downloads for SRPE developments.
 """
 
-import time
-from selenium.webdriver.support.ui import WebDriverWait
-from src.extractors.sales_brochure import sales_brochure
-from src.extractors.register_of_transactions import register_of_transactions
-from src.extractors.price_orders import price_orders
-from src.google_services import update_log, create_drive_folder, insert_new_data, get_or_create_drive_folder
-from .browser import launch_web
-from .file_download import download_pdf
+import re
+from datetime import date, datetime
 
+from .diagnostics import get_logger
+from .file_download import download_pdf_http
 
-def extract_property_data(driver, row_index):
-    """
-    Extract property information from the listing table row.
-    
-    Returns:
-        Dictionary containing property data (name, web, phas, phasnm, addr, area, date)
-    """
-    devm = {}
-    
-    el_devm = driver.find_element("xpath", f"//*[@id='sort_table']/tbody/tr[{row_index}]/td[1]/div/a")
-    devm['name'] = el_devm.text
-    devm['web'] = driver.find_element("xpath", f"//*[@id='sort_table']/tbody/tr[{row_index}]/td[1]/div/div/a").get_attribute("href")
-    devm['phas'] = driver.find_element("xpath", f"//*[@id='sort_table']/tbody/tr[{row_index}]/td[2]").text
-    devm['phasnm'] = driver.find_element("xpath", f"//*[@id='sort_table']/tbody/tr[{row_index}]/td[3]").text
-    devm['addr'] = driver.find_element("xpath", f"//*[@id='sort_table']/tbody/tr[{row_index}]/td[4]").text
-    devm['area'] = driver.find_element("xpath", f"//*[@id='sort_table']/tbody/tr[{row_index}]/td[5]").text
-    devm['date'] = driver.find_element("xpath", f"//*[@id='sort_table']/tbody/tr[{row_index}]/td[6]").text
-    
-    return devm
-
-
-def navigate_and_extract_pdfs(driver, page_url, webload_timeout, docs, devm):
-    """
-    Navigate to property page and extract all PDF links.
-    
-    
-    Returns:
-        Dictionary with keys: 'sales_brochure_pdf', 'register_of_transactions_pdf', 'price_orders_pdf'
-        Returns None if data is not fully available
-    """
-    # Navigate to property page
-    driver.get(page_url)
-    
-    # Extract sales brochure information
-    el_sb = []
-    for attempt in range(2):
-        try:
-            el_sb = WebDriverWait(driver, webload_timeout).until(
-                lambda d: d.find_elements("xpath", "//*[@id='brochure']/div[2]/table/tbody/tr")
-            )
-            break  # Success, exit loop
-        except Exception:
-            if attempt == 0:
-                # Retry navigation on first failure
-                driver.get(page_url)
-            # If second attempt fails, el_sb remains []
-    
-    # Check if at least three rows are found (data is complete)
-    if len(el_sb) <= 2:
-        update_log(docs, f"Data not full available. Skipping this development.\n\n")
-        return None
-    
-    # Extract PDFs from all sources (dicts keyed by cleaned text value → URL)
-    pdfs = {
-        'sales_brochure_pdf': {},
-        'register_of_transactions_pdf': {},
-        'price_orders_pdf': {},
-    }
-    
-    sales_brochure(webload_timeout, docs, devm, el_sb, driver, pdfs['sales_brochure_pdf'])
-    register_of_transactions(webload_timeout, docs, devm, driver, pdfs['register_of_transactions_pdf'])
-    price_orders(webload_timeout, docs, devm, driver, pdfs['price_orders_pdf'])
-    
-    return pdfs
-
-
-def clean_property_data(devm):
-    """
-    Remove newlines and strip whitespace from property data.
-    """
-    return {
-        key: value.replace('\n', '').strip() if isinstance(value, str) else value
-        for key, value in devm.items()
-    }
+_log = get_logger("property_processing")
 
 
 def normalize_addr_for_lookup(addr):
@@ -97,31 +20,237 @@ def normalize_addr_for_lookup(addr):
     if not addr or not isinstance(addr, str):
         return str(addr).strip() if addr is not None else ''
     s = str(addr).strip()
-    for label in ('Sales suspended', 'Sales terminated'):
-        if label in s:
-            s = s.replace(label, '')
+    # Comparison-only cleanup: keep these status labels in stored/display text,
+    # but ignore them when building lookup keys.
+    s = re.sub(r"sales\s*suspended", "", s, flags=re.IGNORECASE)
+    s = re.sub(r"sales\s*terminated", "", s, flags=re.IGNORECASE)
     return ' '.join(s.split())
+
+
+def normalize_web_for_lookup(web):
+    """
+    Strip query string and fragment so listing URLs (e.g. ?devId=...) match spreadsheet
+    base URLs that omit tracking parameters.
+    """
+    if web is None:
+        return ''
+    s = str(web).strip()
+    if not s:
+        return ''
+    if '?' in s:
+        s = s.split('?', 1)[0]
+    if '#' in s:
+        s = s.split('#', 1)[0]
+    # Root URLs often differ only by trailing slash vs spreadsheet.
+    # Compare URLs case-insensitively.
+    return s.rstrip('/').lower()
+
+
+def _is_sb_er_text_field(key: str) -> bool:
+    """Sales brochure / examination record anchor labels (not dates or notes)."""
+    if not isinstance(key, str):
+        return False
+    return key == "sbe_text" or (key.startswith("sb") and key.endswith("_text"))
+
+
+def _sb_er_compare_source_text(value) -> str:
+    """
+    Basis string for comparing SB and Examination Record labels to the sheet.
+
+    The API often appends a second line '(File size: NKB)'; sheet rows frequently
+    store only the first-line anchor title. If '(File size:' appears on the first
+    line, strip from there so one-line pastes still match.
+    """
+    if value is None:
+        return ""
+    s = str(value).strip()
+    if not s:
+        return ""
+    first = s.split("\n", 1)[0].strip()
+    idx = first.lower().find("(file size:")
+    if idx >= 0:
+        first = first[:idx].strip()
+    return first
+
+
+def normalize_lookup_field(value):
+    """
+    Normalize text for devm lookup keys and sheet comparison.
+
+    Google Sheets often stores multiline cells (newlines inside a cell). For direct
+    comparison stability, remove all whitespace characters (spaces/newlines/tabs)
+    so values match regardless of visual spacing differences.
+
+    Real date/datetime cells (and pandas Timestamp) are formatted as DD Mon YYYY
+    before stripping, so they match API string dates like '03 Dec 2025'.
+    """
+    if value is None:
+        return ''
+
+    try:
+        import pandas as pd
+        if value is pd.NaT or pd.isna(value):
+            return ''
+    except Exception:
+        pass
+
+    if isinstance(value, datetime):
+        value = value.strftime("%d %b %Y")
+    elif isinstance(value, date):
+        value = value.strftime("%d %b %Y")
+
+    return ''.join(str(value).split())
+
+
+def normalize_price_list_compare_token(t: str) -> str:
+    """
+    Extra normalization for price-list (po*_text) compare only.
+
+    API builds KB as f\"{kb:,}KB\" (e.g. 1,234KB); Sheets often store 1234KB.
+    Whitespace-normalized tokens then differ; strip digit-group commas so they match.
+    """
+    if not t:
+        return ""
+    return re.sub(r"(?<=\d),(?=\d)", "", t)
+
+
+_DATE_ISO_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+_DATE_SLASH_RE = re.compile(r"\d{1,2}/\d{1,2}/\d{4}")
+_DATE_DASH_DMY_RE = re.compile(r"\d{1,2}-\d{1,2}-\d{4}")
+
+
+def _rewrite_slash_date_substring(match) -> str:
+    s = match.group(0)
+    for fmt in ("%d/%m/%Y", "%m/%d/%Y"):
+        try:
+            dt = datetime.strptime(s, fmt)
+            return "".join(dt.strftime("%d %b %Y").split())
+        except ValueError:
+            continue
+    return s
+
+
+def _rewrite_iso_date_substring(match) -> str:
+    s = match.group(0)
+    try:
+        dt = datetime.strptime(s, "%Y-%m-%d")
+        return "".join(dt.strftime("%d %b %Y").split())
+    except ValueError:
+        return s
+
+
+def _rewrite_dash_dmy_substring(match) -> str:
+    s = match.group(0)
+    for fmt in ("%d-%m-%Y", "%m-%d-%Y"):
+        try:
+            dt = datetime.strptime(s, fmt)
+            return "".join(dt.strftime("%d %b %Y").split())
+        except ValueError:
+            continue
+    return s
+
+
+def normalize_compare_token_calendar_dates(flat: str) -> str:
+    """
+    Rewrite embedded calendar literals inside a whitespace-collapsed token.
+
+    Sheets often use 23/01/2024 or 2024-01-23; main.py replaces newlines with spaces,
+    so PO cells become \"8L 455KB 23/01/2024\" → \"8L455KB23/01/2024\" which never
+    matched API \"8L455KB23Jan2024\". Same for standalone sbe_date / rt_date cells.
+    """
+    if not flat:
+        return flat
+    out = _DATE_ISO_RE.sub(_rewrite_iso_date_substring, flat)
+    out = _DATE_SLASH_RE.sub(_rewrite_slash_date_substring, out)
+    out = _DATE_DASH_DMY_RE.sub(_rewrite_dash_dmy_substring, out)
+    return out
+
+
+def clean_property_data(devm):
+    """
+    Normalize string fields for lookup (multiline → single line, collapse spaces).
+    Normalizes web URL for lookup (drops ?query and #fragment).
+    Date/datetime values are normalized the same way as sheet cells.
+    SB / Examination Record *_text fields use the first-line title only (before
+    '(File size:') so they match sheet cells that omit the file-size line.
+    """
+    out = {}
+    for key, value in devm.items():
+        if isinstance(value, str) or isinstance(value, (datetime, date)):
+            if _is_sb_er_text_field(key) and isinstance(value, str):
+                v = normalize_lookup_field(_sb_er_compare_source_text(value))
+            else:
+                v = normalize_lookup_field(value)
+            if key == 'web':
+                v = normalize_web_for_lookup(v)
+            out[key] = v
+        else:
+            out[key] = value
+    return out
+
+
+def devm_display_for_log(devm: dict) -> dict:
+    """
+    Copy of devm suitable for Google Docs: strip outer whitespace on strings,
+    keep interior newlines (e.g. price-list cells: label / KB / date).
+    """
+    if not devm:
+        return {}
+    return {k: (v.strip() if isinstance(v, str) else v) for k, v in devm.items()}
+
+
+def format_existing_file_update_line(line: str, devm_display: dict = None) -> str:
+    """
+    Format one updates_list line for Google Docs.
+
+    PO *_text values are logged as a compact one-line token built from the
+    sheet-style multiline cell (label + KB + date), e.g.
+    "po10_text: 1I463KB05 Feb 2024".
+    """
+    if not line or not devm_display or ":" not in line:
+        return line
+    field, _, _ = line.partition(":")
+    field = field.strip()
+    if field.startswith("po") and field.endswith("_text"):
+        raw = devm_display.get(field)
+        if raw is not None and isinstance(raw, str) and raw.strip():
+            parts = [p.strip() for p in raw.splitlines() if p and p.strip()]
+            if parts:
+                return f"{field}: {''.join(parts)}"
+    return line
+
+
+def format_po_missing_field_docs(field: str, devm_display: dict = None, devm_nolines: dict = None) -> str:
+    """One bullet for [existing-file diff debug] price-list section (sheet-style newlines)."""
+    if devm_display is not None:
+        raw = devm_display.get(field)
+        if raw is not None and isinstance(raw, str) and raw.strip():
+            inner = raw.strip()
+            return f'  - {field}:\n"{inner}"'
+    fallback = (devm_nolines or {}).get(field, "")
+    return f"  - {field}: {fallback}"
 
 
 def build_lookup_index(devm_df):
     """
     Build a dictionary index from the database DataFrame for O(1) property lookups.
     
-    Key: (name, web, phas, phasnm, addr, area) tuple; addr is normalized (Sales suspended/terminated removed).
-    Value: list of all matching rows (to handle duplicates)
+    Key: (name, web, phas, phasnm) tuple; multiline sheet cells are
+    normalized the same way as scraped data; web has ?query/#fragment stripped.
+    Value: list of all DataFrame rows that share that key (duplicate 4-field rows
+    each appear in the list). Content comparison unions every cell from every
+    matching row into one set — a value matches if it appears in any column of
+    any duplicate row.
     
     Call this once after loading devm_df, then pass the lookup to check_property_in_database.
     """
     lookup = {}
     for _, row in devm_df.iterrows():
-        raw_addr = str(row.iloc[4]).strip()
         key = (
-            str(row.iloc[0]).strip(),  # name
-            str(row.iloc[1]).strip(),  # web
-            str(row.iloc[2]).strip(),  # phas
-            str(row.iloc[3]).strip(),  # phasnm
-            normalize_addr_for_lookup(raw_addr),  # addr (normalized)
-            str(row.iloc[5]).strip(),  # area
+            normalize_lookup_field(row.iloc[0]),
+            normalize_web_for_lookup(normalize_lookup_field(row.iloc[1])),
+            normalize_lookup_field(row.iloc[2]),
+            normalize_lookup_field(row.iloc[3]),
         )
         if key not in lookup:
             lookup[key] = []
@@ -129,15 +258,28 @@ def build_lookup_index(devm_df):
     return lookup
 
 
-def check_property_in_database(devm_nolines, devm_lookup):
+def _build_lookup_key(devm_nolines):
+    """Build the normalized 4-field lookup key used for sheet matching."""
+    return (
+        normalize_lookup_field(devm_nolines.get('name', '')),
+        normalize_web_for_lookup(normalize_lookup_field(devm_nolines.get('web', ''))),
+        normalize_lookup_field(devm_nolines.get('phas', '')),
+        normalize_lookup_field(devm_nolines.get('phasnm', '')),
+    )
+
+
+def check_property_in_database(devm_nolines, devm_lookup, docs=None):
     """
     Check if property exists in database and if it has changed.
     
     Uses a pre-computed lookup dict (from build_lookup_index) for O(1) matching
-    by (name, web, phas, phasnm, addr, area).
+    by (name, web, phas, phasnm).
     
     Then checks if all content values (sb1_date, sbe_date, sb1_text, sbe_text, sb_note, 
-    rt_text, po1_text, po2_text, etc.) can be found anywhere in the matching database row.
+    rt_text, po1_text, po2_text, etc.) can be found anywhere in the matching database row(s).
+    When multiple sheet rows share the same 4-key, every cell from all of those rows
+    is combined into one set (OR semantics). SB / Examination Record label fields
+    compare using the anchor title only (see clean_property_data).
     
     Returns:
         Tuple: (found, is_new, updates_list, missing_fields)
@@ -151,35 +293,26 @@ def check_property_in_database(devm_nolines, devm_lookup):
     updates_list = []
     missing_fields = []
     
-    # Critical fields that must be non-empty (phas and phasnm can be empty strings)
-    critical_fields = ['name', 'web', 'addr', 'area']
+    # Critical fields: name and web must be non-empty.
+    critical_fields = ['name', 'web']
     critical_values = [devm_nolines.get(field) for field in critical_fields]
-    
-    if not all(v is not None and v != '' for v in critical_values):
+    critical_ok = all(v is not None and str(v).strip() != '' for v in critical_values)
+
+    if not critical_ok:
         return found, is_new, updates_list, missing_fields
     
-    # Step 1: O(1) lookup by (name, web, phas, phasnm, addr, area); addr normalized for comparison
-    key = (
-        str(devm_nolines.get('name', '')).strip(),
-        str(devm_nolines.get('web', '')).strip(),
-        str(devm_nolines.get('phas', '')).strip(),
-        str(devm_nolines.get('phasnm', '')).strip(),
-        normalize_addr_for_lookup(devm_nolines.get('addr', '')),
-        str(devm_nolines.get('area', '')).strip(),
-    )
+    # Step 1: O(1) lookup by (name, web, phas, phasnm); same rules as build_lookup_index
+    key = _build_lookup_key(devm_nolines)
     
     matching_rows = devm_lookup.get(key)
     
     # If no match, it's a new project
     if matching_rows is None:
-        print(f"[DEBUG] No lookup match for key: {key}")
         return found, is_new, updates_list, missing_fields
     
     # Step 2: Property exists - check content values
     is_new = False
-    property_name = devm_nolines.get('name', 'UNKNOWN')
-    print(f"\n[DEBUG] ===== Checking content for: {property_name} ({len(matching_rows)} duplicate rows) =====")
-    
+
     # Content fields to check (static fields + dynamically discovered sb/rt/po text fields)
     content_fields = ['sb1_date', 'sbe_date', 'sbe_text', 'sb_note', 'rt_date', 'rt_note', 'po_note']
     sb_text_fields = sorted([k for k in devm_nolines.keys()
@@ -192,28 +325,46 @@ def check_property_in_database(devm_nolines, devm_lookup):
                              if k.startswith('po') and k.endswith('_text')])
     content_fields.extend(po_text_fields)
     
-    # Collect non-empty scraped values
+    # Collect non-empty scraped values (normalize like sheet cells for comparison)
     scraped_values = []
     for field_name in content_fields:
         value = devm_nolines.get(field_name)
-        if value is not None and str(value).strip() != '':
-            scraped_values.append((field_name, str(value).strip()))
-    
-    print(f"[DEBUG] Scraped values ({len(scraped_values)}):")
-    for fn, sv in scraped_values:
-        print(f"[DEBUG]   {fn}: {repr(sv)}")
+        base = normalize_lookup_field(str(value)) if value is not None else ""
+        if not base:
+            continue
+        if field_name.startswith("po") and field_name.endswith("_text"):
+            scraped_values.append(
+                (
+                    field_name,
+                    normalize_compare_token_calendar_dates(
+                        normalize_price_list_compare_token(base)
+                    ),
+                )
+            )
+        elif field_name in ("sb1_date", "sbe_date", "rt_date"):
+            scraped_values.append(
+                (field_name, normalize_compare_token_calendar_dates(base))
+            )
+        else:
+            scraped_values.append((field_name, base))
     
     # Build set of all non-empty values across ALL duplicate rows
     row_values_set = set()
     for row in matching_rows:
         for col_idx in range(len(row)):
-            cell_value = str(row.iloc[col_idx]).strip()
+            raw_cell = row.iloc[col_idx]
+            cell_value = normalize_lookup_field(raw_cell)
             if cell_value:
                 row_values_set.add(cell_value)
-    
-    print(f"[DEBUG] Combined DB values from {len(matching_rows)} rows ({len(row_values_set)} unique):")
-    for rv in sorted(row_values_set):
-        print(f"[DEBUG]   {repr(rv)}")
+                pl = normalize_price_list_compare_token(cell_value)
+                row_values_set.add(pl)
+                row_values_set.add(normalize_compare_token_calendar_dates(cell_value))
+                row_values_set.add(normalize_compare_token_calendar_dates(pl))
+            # Title-only token so SB / Examination Record cells with a file-size line
+            # still match API/sheet rows that store only the first line.
+            cell_sb_er = normalize_lookup_field(_sb_er_compare_source_text(raw_cell))
+            if cell_sb_er:
+                row_values_set.add(cell_sb_er)
     
     # Check each scraped value against the combined set
     rt_missing = []
@@ -228,11 +379,9 @@ def check_property_in_database(devm_nolines, devm_lookup):
             else:
                 missing_fields.append(field_name)
                 updates_list.append(f"{field_name}: {scraped_value}")
-            print(f"[DEBUG] ❌ MISSING: {field_name} = {repr(scraped_value)}")
         else:
             if is_rt_field:
                 rt_matched_any = True
-            print(f"[DEBUG] ✓ MATCH: {field_name}")
 
     # Handle RT fields: only count as genuine changes if RT was previously stored
     # (i.e. at least one scraped RT value was found in the DB).
@@ -242,21 +391,15 @@ def check_property_in_database(devm_nolines, devm_lookup):
         for field_name, scraped_value in rt_missing:
             missing_fields.append(field_name)
             updates_list.append(f"{field_name}: {scraped_value}")
-        print(f"[DEBUG] RT has data in DB — {len(rt_missing)} RT fields are genuine changes")
-    else:
-        print(f"[DEBUG] RT legacy (no RT data in DB) — ignoring {len(rt_missing)} missing RT fields")
 
-    print(f"[DEBUG] Result: {len(missing_fields)} missing out of {len(scraped_values)} (excl legacy RT)")
-    
     # If all non-legacy values found, it's a match (no changes)
     if len(updates_list) == 0:
         found = True
-    
+
     return found, is_new, updates_list, missing_fields
 
 
 def process_property_pdfs(
-    driver,
     pdfs,
     property_folder_id,
     sales_brochure_files_dir,
@@ -273,7 +416,7 @@ def process_property_pdfs(
     already_uploaded=None,
 ):
     """
-    Download and process PDFs for a property.
+    Download and process PDFs for a property (HTTP GET to SRPE, then Drive upload).
 
     PDF dicts are keyed by cleaned text value (e.g. '1350KB30 Jun 2014' → url).
 
@@ -283,6 +426,8 @@ def process_property_pdfs(
 
     already_uploaded: optional set of text keys already uploaded (for this property).
     On retry after timeout we only download PDFs not in this set (resume where we left off).
+
+    Returns False normally; True signals retry (historical compat; HTTP path rarely returns True).
     """
     if missing_fields is None:
         # New property: download everything (minus already_uploaded on retry)
@@ -309,202 +454,34 @@ def process_property_pdfs(
         if sb_pdfs or po_pdfs:
             rt_pdfs = pdfs['register_of_transactions_pdf']
 
-        print(f"[DEBUG] Granular download: "
-              f"sb={len(sb_pdfs)}/{len(pdfs['sales_brochure_pdf'])}, "
-              f"rt={len(rt_pdfs)}/{len(pdfs['register_of_transactions_pdf'])}, "
-              f"po={len(po_pdfs)}/{len(pdfs['price_orders_pdf'])}")
-
     # Resume: skip PDFs already uploaded (on retry after timeout)
     if already_uploaded:
         sb_pdfs = {k: v for k, v in sb_pdfs.items() if k not in already_uploaded}
         rt_pdfs = {k: v for k, v in rt_pdfs.items() if k not in already_uploaded}
         po_pdfs = {k: v for k, v in po_pdfs.items() if k not in already_uploaded}
-        print(f"[DEBUG] Resuming: skipping {len(already_uploaded)} already-uploaded PDF(s)")
+
+    def _dl(pdf_dict, dest_dir):
+        return download_pdf_http(
+            pdf_dict, dest_dir, property_folder_id, drive_service,
+            prices_folder_id, transactions_folder_id,
+            development_name, version, docs,
+            already_uploaded=already_uploaded,
+        )
 
     # Download filtered sales brochure PDFs
     if sb_pdfs:
-        timeout_download = download_pdf(
-            driver, sb_pdfs, sales_brochure_files_dir,
-            property_folder_id, drive_service, prices_folder_id,
-            transactions_folder_id, development_name, version, docs,
-            already_uploaded=already_uploaded,
-        )
-        if timeout_download:
+        if _dl(sb_pdfs, sales_brochure_files_dir):
             return True
 
     # Download register of transactions PDFs
     if rt_pdfs:
-        timeout_download = download_pdf(
-            driver, rt_pdfs, register_of_transactions_files_dir,
-            property_folder_id, drive_service, prices_folder_id,
-            transactions_folder_id, development_name, version, docs,
-            already_uploaded=already_uploaded,
-        )
-        if timeout_download:
+        if _dl(rt_pdfs, register_of_transactions_files_dir):
             return True
 
     # Download filtered price orders PDFs
     if po_pdfs:
-        timeout_download = download_pdf(
-            driver, po_pdfs, price_lists_files_dir,
-            property_folder_id, drive_service, prices_folder_id,
-            transactions_folder_id, development_name, version, docs,
-            already_uploaded=already_uploaded,
-        )
-        if timeout_download:
+        if _dl(po_pdfs, price_lists_files_dir):
             return True
 
     return False
-
-
-def restart_browser(driver, target_web, webload_timeout, chrome_exe_path, delay=2):
-    """
-    Restart the browser to recover from errors or timeouts.
-    """
-    driver.quit()
-    time.sleep(delay)
-    return launch_web(target_web, webload_timeout=webload_timeout, chrome_exe_path=chrome_exe_path)
-
-
-def process_single_property(
-    driver,
-    row_index,
-    target_web,
-    webload_timeout,
-    chrome_exe_path,
-    devm_lookup,
-    sheet,
-    run_folder_id,
-    sales_brochure_files_dir,
-    register_of_transactions_files_dir,
-    price_lists_files_dir,
-    drive_service,
-    prices_folder_id,
-    transactions_folder_id,
-    version,
-    docs,
-    cached_folder_ids,
-    already_uploaded_pdfs,
-    logged_updates_for_rows=None,
-):
-    """
-    Process a single property: extract data, check database, download PDFs.
-    
-    
-    Returns:
-        Tuple: (timeout_occurred, driver)
-            - timeout_occurred: True if download timeout occurred
-            - driver: WebDriver instance (may be restarted)
-    """
-    start_time = time.time()
-    is_retry = logged_updates_for_rows is not None and row_index in logged_updates_for_rows
-
-    # Extract property data from table
-    devm = extract_property_data(driver, row_index)
-    name_cleaned = devm['name'].replace('\n', '')
-    if not is_retry:
-        update_log(docs, f"==== Development {row_index} {name_cleaned} begins ====\n")
-
-    # Navigate to property page and extract PDFs
-    page_url = driver.find_element("xpath", f"//*[@id='sort_table']/tbody/tr[{row_index}]/td[1]/div/a").get_attribute("href")
-    pdfs = navigate_and_extract_pdfs(driver, page_url, webload_timeout, docs, devm)
-    
-    if pdfs is None:
-        # Data incomplete, skip this property
-        driver.back()
-        return False, driver
-    
-    # Clean property data and check database
-    devm_nolines = clean_property_data(devm)
-    found, is_new, updates_list, missing_fields = check_property_in_database(devm_nolines, devm_lookup)
-    
-    # Skip if property exists with no changes
-    if found:
-        driver.back()
-        elapsed = (time.time() - start_time) / 60
-        update_log(docs, f"finished devm {row_index} in {elapsed:.2f} min\n\n")
-        return False, driver
-
-    # Only insert/log updates when there are non-metadata changes.
-    # If ONLY metadata-style notice fields differ, skip downloads and DB insert.
-    metadata_only_fields = {'sb_note', 'sbe_date', 'rt_note', 'rt_date', 'po_note'}
-    only_metadata_changed = (
-        not is_new
-        and missing_fields
-        and all(f in metadata_only_fields for f in missing_fields)
-    )
-    if only_metadata_changed:
-        driver.back()
-        elapsed = (time.time() - start_time) / 60
-        update_log(docs, f"finished devm {row_index} in {elapsed:.2f} min\n\n")
-        return False, driver
-    
-    # Log new or updated property (skip long \"New File\" / \"Updates\" log on retry to avoid repetition)
-    if is_new:
-        if logged_updates_for_rows is not None and row_index in logged_updates_for_rows:
-            update_log(docs, f"Retrying row {row_index} ({devm_nolines['name']}) — continuing downloads for new file.\n")
-        else:
-            update_log(docs, f"New File: {devm_nolines['name']}\n")
-            if logged_updates_for_rows is not None:
-                logged_updates_for_rows.add(row_index)
-        # New property: download all PDFs
-        missing_fields = None  # None means download all
-    else:
-        if logged_updates_for_rows is not None and row_index in logged_updates_for_rows:
-            update_log(docs, f"Retrying row {row_index} ({devm_nolines['name']}) — updates unchanged.\n")
-        else:
-            update_log(docs, f"Updates to Existing File: {devm_nolines['name']}\n" + '\n'.join([f'updated {u}' for u in updates_list]) + '\n')
-            if logged_updates_for_rows is not None:
-                logged_updates_for_rows.add(row_index)
-        # Existing property: only download PDFs for missing fields
-    
-    # Create property folder (or reuse cached one from a previous timeout retry;
-    # or reuse existing folder by name after script restart to avoid duplicates)
-    if devm_nolines['name'] in cached_folder_ids:
-        property_folder_id = cached_folder_ids[devm_nolines['name']]
-    else:
-        property_folder_id = get_or_create_drive_folder(
-            devm_nolines['name'], run_folder_id, drive_service
-        )
-        cached_folder_ids[devm_nolines['name']] = property_folder_id
-
-    # Resume: only download PDFs not yet uploaded (on retry after timeout)
-    timeout_occurred = process_property_pdfs(
-        driver=driver,
-        pdfs=pdfs,
-        property_folder_id=property_folder_id,
-        sales_brochure_files_dir=sales_brochure_files_dir,
-        register_of_transactions_files_dir=register_of_transactions_files_dir,
-        price_lists_files_dir=price_lists_files_dir,
-        drive_service=drive_service,
-        prices_folder_id=prices_folder_id,
-        transactions_folder_id=transactions_folder_id,
-        development_name=devm_nolines['name'],
-        version=version,
-        docs=docs,
-        missing_fields=missing_fields,
-        devm_nolines=devm_nolines,
-        already_uploaded=already_uploaded_pdfs,
-    )
-    
-    # Restart browser if timeout occurred (logging already handled at PDF level)
-    if timeout_occurred:
-        driver = restart_browser(driver, target_web, webload_timeout, chrome_exe_path)
-        return True, driver
-    
-    # Update database with new property data
-    insert_new_data(sheet, devm)
-
-    # Clear cached folder and uploaded-PDF set since property completed successfully
-    cached_folder_ids.pop(devm_nolines['name'], None)
-    already_uploaded_pdfs.clear()
-    if logged_updates_for_rows is not None:
-        logged_updates_for_rows.discard(row_index)
-    
-    # Return to listing page
-    driver.back()
-    elapsed = (time.time() - start_time) / 60
-    update_log(docs, f"finished devm {row_index} in {elapsed:.2f} min\n\n")
-    
-    return False, driver
 

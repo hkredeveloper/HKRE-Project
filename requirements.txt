@@ -1,9 +1,5 @@
 # HKRE App dependencies. Python 3.9+. Java required separately for Tabula (PDF→CSV).
 
-# Web Scraping
-selenium>=4.14.0
-selenium-stealth>=1.0.6
-
 # Data Processing
 pandas>=2.2.0
 numpy>=1.26.0

@@ -1,60 +1,95 @@
-name: HKRE Scheduled Scraper
+# HKRE full scrape — run manually or on a schedule.
+#
+# Repo secrets (Settings → Secrets → Actions):
+#   GOOGLE_CREDS_JSON       — JSON for service account used by Sheets (same as locally).
+#   GOOGLE_TOKEN_JSON_B64   — base64-encoded OAuth token JSON saved as config/credentials.json for Drive.
+#   GOOGLE_OAUTH_JSON       — OAuth desktop client JSON (base64 ok) — required only if Drive token expires and needs refresh.
+# Optional:
+#   PARENT_FOLDER_ID        — overrides default Drive folder in config/settings.py
+
+name: HKRE Scraper
 
 on:
   workflow_dispatch:
+  # Weekly run — edit cron to suit your timezone (times are UTC).
+  schedule:
+    - cron: "0 18 * * 0" # Sundays 18:00 UTC
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hkre-scraper-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   run:
     runs-on: ubuntu-latest
+    timeout-minutes: 480
 
     env:
+      PYTHONUNBUFFERED: "1"
       GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
       GOOGLE_OAUTH_JSON: ${{ secrets.GOOGLE_OAUTH_JSON }}
       GOOGLE_TOKEN_JSON_B64: ${{ secrets.GOOGLE_TOKEN_JSON_B64 }}
+      PARENT_FOLDER_ID: ${{ secrets.PARENT_FOLDER_ID }}
+      # Match local default behaviour: suppress metadata-only sheet prepends unless you intentionally opt out.
+      HKRE_SKIP_METADATA_SHEET_INSERT: "1"
 
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
+
+      - name: Check required secrets
+        env:
+          CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
+          TOKEN_B64: ${{ secrets.GOOGLE_TOKEN_JSON_B64 }}
+          OAUTH_JSON: ${{ secrets.GOOGLE_OAUTH_JSON }}
+        run: |
+          if [ -z "$CREDS_JSON" ]; then echo "Missing secret GOOGLE_CREDS_JSON"; exit 1; fi
+          if [ -z "$TOKEN_B64" ]; then echo "Missing secret GOOGLE_TOKEN_JSON_B64 (Drive OAuth cached token)"; exit 1; fi
+          # OAuth client config — needed when the saved token expires and must be refreshed interactively-less in CI depends on refresh token being valid
+          if [ -z "$OAUTH_JSON" ]; then echo "Warning: GOOGLE_OAUTH_JSON empty — token refresh will fail after expiry"; fi
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Set up Chrome
-        uses: browser-actions/setup-chrome@v1
-        with:
-          chrome-version: stable
-
-      - name: Install system dependencies (Java + Xvfb + Chrome libs)
+      - name: Install Java (Tabula)
         run: |
           sudo apt-get update
-          sudo apt-get install -y openjdk-17-jre-headless xvfb unzip \
-            libnss3 libxss1 libatk-bridge2.0-0 libgtk-3-0 fonts-liberation \
-            libgbm1 xdg-utils libu2f-udev libcups2 libdrm2
-          sudo apt-get install -y libasound2t64 2>/dev/null || sudo apt-get install -y libasound2
+          sudo apt-get install -y openjdk-17-jre-headless unzip
 
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Ensure config and Tabula JAR
+      - name: Ensure Tabula JAR
         run: |
           mkdir -p config
           JAR=src/converters/tabula-1.0.2-jar-with-dependencies.jar
           if [ ! -f "$JAR" ]; then
             echo "Downloading Tabula JAR..."
-            curl -sL -o "$JAR" \
+            curl -fsSL -o "$JAR" \
               "https://github.com/tabulapdf/tabula-java/releases/download/v1.0.2/tabula-1.0.2-jar-with-dependencies.jar"
           fi
-          test -f "$JAR" || { echo "Tabula JAR missing and download failed"; exit 1; }
+          test -f "$JAR" || { echo "Tabula JAR missing"; exit 1; }
 
-      - name: Seed OAuth token for Drive (CI)
-        if: env.GOOGLE_TOKEN_JSON_B64 != ''
+      - name: Seed Drive OAuth token
         run: |
           echo "$GOOGLE_TOKEN_JSON_B64" | base64 --decode > config/credentials.json
+          test -s config/credentials.json || { echo "Decoded credentials empty"; exit 1; }
 
       - name: Run scraper
-        run: xvfb-run -a python src/main.py
         working-directory: ${{ github.workspace }}
+        run: python src/main.py
+
+      - name: Upload debug folder on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hkre-debug
+          path: debug
+          if-no-files-found: warn

@@ -13,7 +13,7 @@ def update_log(docs, text):
         text: Text to append to the log
     """
     # Document ID extracted from the provided link
-    document_id = "1Exn8sDkWz_FPK_dlPZNJonNVTkojyoGHbK3yg5EX_WE"
+    document_id = "1GxDfL0Y5_62HniHOxDS9j1VdHIO22QohkK7UaOT-PtA"
     
     # Fetch the document to determine the end index
     document = docs.documents().get(documentId=document_id).execute()

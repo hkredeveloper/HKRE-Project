@@ -1,4 +1,5 @@
 HKRE Bot Update.json
+OAuth Client ID HKRE Project.json
 .env
 *.pdf
 HKRE File Upload.json
@@ -25,9 +26,15 @@ data/**/*.crdownload
 config/credentials.json
 token.json
 
-# IDE
+# IDE / local tooling
 .vscode/
 .idea/
+.claude/
 *.swp
 *.swo
 .DS_Store
+
+PRD-non-t18m-scraper.md
+
+# Local experiment notebook (scratch / outputs)
+src/hkre_experiment.ipynb
