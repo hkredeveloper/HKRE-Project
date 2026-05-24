@@ -53,7 +53,7 @@ HKRE App/
 - `config/settings.py` — SRPE API endpoints/referers, data dirs, credentials path, `PARENT_FOLDER_ID`.
 - Environment: `.env` is loaded automatically when present (`python-dotenv`).
 - **`HKRE_SKIP_METADATA_SHEET_INSERT`:** omit or set **`1`** to skip spreadsheet prepends when only metadata/note/date columns drift; set **`0`** if you still want those cells refreshed (prepend at row 2).
-- **GitHub Actions:** `.github/workflows/hkre_scraper.yml` — use **Run workflow**, or the weekly `schedule` (change the cron). Add the repository secrets named in the YAML header comment.
+- **GitHub Actions:** workflow uses **`HKRE_USE_OAUTH_FOR_SHEETS=1`** (OAuth for Sheets+Docs+Drive). Set secrets **`GOOGLE_TOKEN_JSON_B64`** and **`GOOGLE_OAUTH_JSON`** (see YAML header). Locally, using **`GOOGLE_CREDS_JSON`** without that flag requires **sharing the devm Sheet** with the service account or Google returns **403**.
 
 ## Requirements (requirements.txt)
 

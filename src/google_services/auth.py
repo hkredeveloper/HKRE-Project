@@ -29,19 +29,64 @@ SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",  # Read/write access to Google Sheets
     "https://www.googleapis.com/auth/documents",     # Read/write access to Google Docs
 ]
+# Google spreadsheet opened by HKRE_DEVM_SPREADSHEET_ID env or this default HKRE devm workbook.
+HKRE_DEFAULT_SPREADSHEET_KEY = os.getenv(
+    "HKRE_DEVM_SPREADSHEET_ID",
+    "1uVNZy9SE1PjtTeaCFl-dZrH4VdLPKen4pcTIbEIMKFE",
+)
+
+
+def _secret_service_account_dict(raw: str) -> dict:
+    """Decode GOOGLE_CREDS_JSON from base64-or-raw JSON (GitHub secret may be either)."""
+    if not raw or not raw.strip():
+        raise ValueError("Empty GOOGLE_CREDS_JSON")
+    s = raw.strip()
+    try:
+        decoded = json.loads(base64.b64decode(s))
+        if isinstance(decoded, dict):
+            return decoded
+    except Exception:
+        pass
+    return json.loads(s)
+
+
+def _use_oauth_for_sheets() -> bool:
+    """GitHub Actions / setups where Sheets is under a user Google account — same token as Drive."""
+    return os.getenv("HKRE_USE_OAUTH_FOR_SHEETS", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
 
 
 def google_auth():
     """
-    Authenticate with Google using service account credentials.
-    Returns spreadsheet and docs clients for Sheets and Docs operations.
+    Return gspread workbook + Docs API client.
+
+    Two modes:
+    - Default: service account from GOOGLE_CREDS_JSON — spreadsheet must be *shared*
+      with that service account email (Editors).
+    - HKRE_USE_OAUTH_FOR_SHEETS=1: use OAuth token (config/credentials.json from
+      GOOGLE_TOKEN_JSON_B64) — same user as Drive; no worksheet sharing hack.
     """
+    if _use_oauth_for_sheets():
+        creds = _load_creds()
+        client = gspread.authorize(creds)
+        spreadsheet = client.open_by_key(HKRE_DEFAULT_SPREADSHEET_KEY)
+        docs = build("docs", "v1", credentials=creds)
+        return spreadsheet, docs
+
     raw = os.getenv("GOOGLE_CREDS_JSON")
-    info = json.loads(base64.b64decode(raw).decode("utf-8"))
+    if not raw or not str(raw).strip():
+        raise EnvironmentError(
+            "GOOGLE_CREDS_JSON is empty. Set HKRE_USE_OAUTH_FOR_SHEETS=1 to reuse "
+            "OAuth token for Sheets/Docs, or configure a service-account JSON secret."
+        )
+    info = _secret_service_account_dict(raw)
     creds = service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
 
     client = gspread.authorize(creds)
-    spreadsheet = client.open_by_key("1uVNZy9SE1PjtTeaCFl-dZrH4VdLPKen4pcTIbEIMKFE")
+    spreadsheet = client.open_by_key(HKRE_DEFAULT_SPREADSHEET_KEY)
     docs = build("docs", "v1", credentials=creds)
     return spreadsheet, docs
 

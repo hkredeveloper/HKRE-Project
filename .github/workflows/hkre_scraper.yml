@@ -1,11 +1,20 @@
 # HKRE full scrape — run manually or on a schedule.
 #
 # Repo secrets (Settings → Secrets → Actions):
-#   GOOGLE_CREDS_JSON       — JSON for service account used by Sheets (same as locally).
-#   GOOGLE_TOKEN_JSON_B64   — base64-encoded OAuth token JSON saved as config/credentials.json for Drive.
-#   GOOGLE_OAUTH_JSON       — OAuth desktop client JSON (base64 ok) — required only if Drive token expires and needs refresh.
+#   GOOGLE_TOKEN_JSON_B64 — base64 of OAuth authorized_user JSON written to config/credentials.json before run.
+#   GOOGLE_OAUTH_JSON     — OAuth client JSON (supports base64) so refresh tokens work when access token expires.
+#
+# Credentials mode (recommended for CI):
+#   HKRE_USE_OAUTH_FOR_SHEETS=1 (set below): Sheets/Docs use the SAME OAuth identity as Drive. No worksheet
+#   sharing with a bot account needed.
+#
+# Alternative (local/testing):
+#   Unset HKRE_USE_OAUTH_FOR_SHEETS and provide GOOGLE_CREDS_JSON — a *service-account* JSON. You MUST share the
+#   HKRE devm spreadsheet with that account's email (Editors), or Sheets returns HTTP 403.
+#
 # Optional:
 #   PARENT_FOLDER_ID        — overrides default Drive folder in config/settings.py
+#   HKRE_DEVM_SPREADSHEET_ID — override default devm Google Sheet ID
 
 name: HKRE Scraper
 
@@ -29,27 +38,30 @@ jobs:
 
     env:
       PYTHONUNBUFFERED: "1"
+      HKRE_USE_OAUTH_FOR_SHEETS: "1"
       GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
       GOOGLE_OAUTH_JSON: ${{ secrets.GOOGLE_OAUTH_JSON }}
       GOOGLE_TOKEN_JSON_B64: ${{ secrets.GOOGLE_TOKEN_JSON_B64 }}
       PARENT_FOLDER_ID: ${{ secrets.PARENT_FOLDER_ID }}
-      # Match local default behaviour: suppress metadata-only sheet prepends unless you intentionally opt out.
       HKRE_SKIP_METADATA_SHEET_INSERT: "1"
 
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Check required secrets
+      - name: Validate secrets for OAuth Sheets mode
         env:
-          CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
           TOKEN_B64: ${{ secrets.GOOGLE_TOKEN_JSON_B64 }}
-          OAUTH_JSON: ${{ secrets.GOOGLE_OAUTH_JSON }}
+          CLIENT_JSON: ${{ secrets.GOOGLE_OAUTH_JSON }}
         run: |
-          if [ -z "$CREDS_JSON" ]; then echo "Missing secret GOOGLE_CREDS_JSON"; exit 1; fi
-          if [ -z "$TOKEN_B64" ]; then echo "Missing secret GOOGLE_TOKEN_JSON_B64 (Drive OAuth cached token)"; exit 1; fi
-          # OAuth client config — needed when the saved token expires and must be refreshed interactively-less in CI depends on refresh token being valid
-          if [ -z "$OAUTH_JSON" ]; then echo "Warning: GOOGLE_OAUTH_JSON empty — token refresh will fail after expiry"; fi
+          if [ -z "$TOKEN_B64" ]; then
+            echo "Missing GOOGLE_TOKEN_JSON_B64 — base64-encode your OAuth authorized_user credentials JSON." >&2
+            exit 1
+          fi
+          if [ -z "$CLIENT_JSON" ]; then
+            echo "Missing GOOGLE_OAUTH_JSON — OAuth client secrets JSON is required when access tokens expire in CI." >&2
+            exit 1
+          fi
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -77,7 +89,7 @@ jobs:
           fi
           test -f "$JAR" || { echo "Tabula JAR missing"; exit 1; }
 
-      - name: Seed Drive OAuth token
+      - name: Seed OAuth token (Sheets + Drive)
         run: |
           echo "$GOOGLE_TOKEN_JSON_B64" | base64 --decode > config/credentials.json
           test -s config/credentials.json || { echo "Decoded credentials empty"; exit 1; }
