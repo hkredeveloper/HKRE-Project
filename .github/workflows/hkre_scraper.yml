@@ -110,13 +110,25 @@ jobs:
           python - <<'PY'
           import os, base64, pathlib, sys, json
 
-          raw = os.environ.get("GOOGLE_TOKEN_JSON") or ""
+          raw_in = os.environ.get("GOOGLE_TOKEN_JSON") or ""
           b64_in = os.environ.get("GOOGLE_TOKEN_JSON_B64") or ""
           # Base64 secrets may be pasted with stray newlines; remove all whitespace.
           b64_clean = "".join(b64_in.split())
           path = pathlib.Path("config/credentials.json")
 
-          # Prefer base64 first (single line, fewer GH/YAML quirks). Raw JSON depends on env passing full string.
+          def coerce_token_text(s):
+              """Normalize token env: unwrap JSON-string layer GitHub/toJSON sometimes leaves on empty secrets."""
+              t = (s or "").strip().lstrip("\ufeff")
+              if len(t) >= 2 and t[0] == '"' and t[-1] == '"':
+                  try:
+                      inner = json.loads(t)
+                      if isinstance(inner, str):
+                          return inner.strip()
+                  except json.JSONDecodeError:
+                      pass
+              return t
+
+          # Prefer base64 first (single line, fewer GH/YAML quirks).
           if b64_clean:
               try:
                   decoded = base64.b64decode(b64_clean)
@@ -125,15 +137,25 @@ jobs:
                   sys.exit(1)
               path.write_bytes(decoded)
               print("Seeded credentials from GOOGLE_TOKEN_JSON_B64")
-          elif raw.strip():
-              path.write_text(raw.lstrip("\ufeff"))
-              print("Seeded credentials from GOOGLE_TOKEN_JSON")
           else:
-              print(
-                  "::error ::No GOOGLE_TOKEN_JSON or GOOGLE_TOKEN_JSON_B64 in job env",
-                  file=sys.stderr,
-              )
-              sys.exit(1)
+              raw = coerce_token_text(raw_in)
+              if raw.startswith("{"):
+                  path.write_text(raw)
+                  print("Seeded credentials from GOOGLE_TOKEN_JSON")
+              elif raw:
+                  print(
+                      "GOOGLE_TOKEN_JSON is set but does not look like OAuth JSON "
+                      '(expected {...} beginning with "{"). Prefer GOOGLE_TOKEN_JSON_B64 '
+                      "(base64 of config/credentials.json).",
+                      file=sys.stderr,
+                  )
+                  sys.exit(1)
+              else:
+                  print(
+                      "::error ::Fill GOOGLE_TOKEN_JSON with full credentials.json, or GOOGLE_TOKEN_JSON_B64.",
+                      file=sys.stderr,
+                  )
+                  sys.exit(1)
 
           blob = path.read_text()
           if not blob.strip():
@@ -149,10 +171,13 @@ jobs:
               print(
                   "credentials not valid JSON:",
                   e,
-                  "| Put raw {...} JSON in GOOGLE_TOKEN_JSON secret, "
-                  "or base64-encode credentials.json only for GOOGLE_TOKEN_JSON_B64.",
+                  "| Use GOOGLE_TOKEN_JSON_B64 = base64 of config/credentials.json (recommended), "
+                  "or paste the full JSON object in GOOGLE_TOKEN_JSON (must start with {).",
                   file=sys.stderr,
               )
+              sys.exit(1)
+          if not isinstance(data, dict):
+              print(f"credentials JSON must be an object {{}}, got {type(data).__name__}", file=sys.stderr)
               sys.exit(1)
           if not data.get("refresh_token"):
               print("credentials must include refresh_token", file=sys.stderr)
