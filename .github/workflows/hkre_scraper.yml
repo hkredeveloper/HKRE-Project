@@ -100,32 +100,65 @@ jobs:
           test -f "$JAR" || { echo "Tabula JAR missing"; exit 1; }
 
       - name: Seed OAuth token (Sheets + Drive)
+        env:
+          GOOGLE_TOKEN_JSON: ${{ secrets.GOOGLE_TOKEN_JSON }}
+          GOOGLE_TOKEN_JSON_B64: ${{ secrets.GOOGLE_TOKEN_JSON_B64 }}
         run: |
           mkdir -p config
-          b64=$(echo -n "$GOOGLE_TOKEN_JSON_B64" | tr -d '[:space:]')
-          if [ -n "$b64" ]; then
-            echo "$b64" | base64 --decode > config/credentials.json
-          else
-            printf '%s' "$GOOGLE_TOKEN_JSON" > config/credentials.json
-          fi
-          python - <<'EOF'
-          import json, pathlib, sys
-          p = pathlib.Path("config/credentials.json")
-          if not p.is_file() or p.stat().st_size == 0:
-              print("credentials empty", file=sys.stderr)
+          python - <<'PY'
+          import os, base64, pathlib, sys, json
+
+          raw = os.environ.get("GOOGLE_TOKEN_JSON") or ""
+          b64_in = os.environ.get("GOOGLE_TOKEN_JSON_B64") or ""
+          # Base64 secrets may be pasted with stray newlines; remove all whitespace.
+          b64_clean = "".join(b64_in.split())
+          path = pathlib.Path("config/credentials.json")
+
+          # Prefer full JSON pasted into GOOGLE_TOKEN_JSON (common mistake: raw JSON stored in *_B64)
+          if raw.strip():
+              path.write_text(raw.lstrip("\ufeff"))
+              print("Seeded credentials from GOOGLE_TOKEN_JSON")
+          elif b64_clean:
+              try:
+                  decoded = base64.b64decode(b64_clean)
+              except Exception as e:
+                  print(f"GOOGLE_TOKEN_JSON_B64 is not valid base64: {e}", file=sys.stderr)
+                  sys.exit(1)
+              path.write_bytes(decoded)
+              print("Seeded credentials from GOOGLE_TOKEN_JSON_B64")
+          else:
+              print(
+                  "::error ::No GOOGLE_TOKEN_JSON or GOOGLE_TOKEN_JSON_B64 in job env",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+
+          blob = path.read_text()
+          if not blob.strip():
+              print(
+                  "credentials empty — paste raw credentials.json into GOOGLE_TOKEN_JSON, "
+                  "or put base64 in GOOGLE_TOKEN_JSON_B64 only (not raw JSON in B64).",
+                  file=sys.stderr,
+              )
               sys.exit(1)
           try:
-              data = json.loads(p.read_text())
+              data = json.loads(blob)
           except json.JSONDecodeError as e:
-              print("credentials not valid JSON", e, file=sys.stderr)
+              print(
+                  "credentials not valid JSON:",
+                  e,
+                  "| Put raw {...} JSON in GOOGLE_TOKEN_JSON secret, "
+                  "or base64-encode credentials.json only for GOOGLE_TOKEN_JSON_B64.",
+                  file=sys.stderr,
+              )
               sys.exit(1)
           if not data.get("refresh_token"):
-              print("credentials must include refresh_token (OAuth user token JSON)", file=sys.stderr)
+              print("credentials must include refresh_token", file=sys.stderr)
               sys.exit(1)
           if not data.get("client_id"):
-              print("credentials must include client_id for token refresh", file=sys.stderr)
+              print("credentials must include client_id", file=sys.stderr)
               sys.exit(1)
-          EOF
+          PY
 
       - name: Run scraper
         working-directory: ${{ github.workspace }}
