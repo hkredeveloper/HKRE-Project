@@ -1,8 +1,9 @@
 # HKRE full scrape — run manually or on a schedule.
 #
-# Repo secrets (Settings → Secrets → Actions):
-#   GOOGLE_TOKEN_JSON_B64 — base64 of OAuth authorized_user JSON written to config/credentials.json before run.
-#   GOOGLE_OAUTH_JSON     — OAuth client JSON (supports base64) so refresh tokens work when access token expires.
+# Repo secrets (Settings → Secrets and variables → Actions → Repository secrets):
+#   EITHER GOOGLE_TOKEN_JSON_B64 — one-line base64 of your local OAuth user JSON (= config/credentials.json),
+#   OR     GOOGLE_TOKEN_JSON     — paste that same JSON (multiline). One token secret is required.
+#   GOOGLE_OAUTH_JSON           — OAuth "installed app" client JSON; raw or base64 (needed when access token expires).
 #
 # Credentials mode (recommended for CI):
 #   HKRE_USE_OAUTH_FOR_SHEETS=1 (set below): Sheets/Docs use the SAME OAuth identity as Drive. No worksheet
@@ -42,6 +43,7 @@ jobs:
       GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
       GOOGLE_OAUTH_JSON: ${{ secrets.GOOGLE_OAUTH_JSON }}
       GOOGLE_TOKEN_JSON_B64: ${{ secrets.GOOGLE_TOKEN_JSON_B64 }}
+      GOOGLE_TOKEN_JSON: ${{ secrets.GOOGLE_TOKEN_JSON }}
       PARENT_FOLDER_ID: ${{ secrets.PARENT_FOLDER_ID }}
       HKRE_SKIP_METADATA_SHEET_INSERT: "1"
 
@@ -52,14 +54,22 @@ jobs:
       - name: Validate secrets for OAuth Sheets mode
         env:
           TOKEN_B64: ${{ secrets.GOOGLE_TOKEN_JSON_B64 }}
+          TOKEN_JSON: ${{ secrets.GOOGLE_TOKEN_JSON }}
           CLIENT_JSON: ${{ secrets.GOOGLE_OAUTH_JSON }}
         run: |
-          if [ -z "$TOKEN_B64" ]; then
-            echo "Missing GOOGLE_TOKEN_JSON_B64 — base64-encode your OAuth authorized_user credentials JSON." >&2
+          # Safe diagnostics — lengths only (do not echo secret bodies).
+          b64_trim=$(echo -n "$TOKEN_B64" | tr -d '[:space:]')
+          json_trim=$(echo -n "$TOKEN_JSON" | tr -d '[:space:]')
+          oauth_trim=$(echo -n "$CLIENT_JSON" | tr -d '[:space:]')
+          echo "Lengths: GOOGLE_TOKEN_JSON_B64=${#b64_trim} chars, GOOGLE_TOKEN_JSON=${#json_trim} chars, GOOGLE_OAUTH_JSON=${#oauth_trim}"
+          if [ ${#b64_trim} -eq 0 ] && [ ${#json_trim} -eq 0 ]; then
+            echo "Missing token: add Repository secret GOOGLE_TOKEN_JSON_B64 (base64 of config/credentials.json)" >&2
+            echo "               OR GOOGLE_TOKEN_JSON (paste authorized_user JSON as multiline)." >&2
+            echo "Name must match exactly — not Codespaces/org-only secrets unless this workflow uses an environment." >&2
             exit 1
           fi
-          if [ -z "$CLIENT_JSON" ]; then
-            echo "Missing GOOGLE_OAUTH_JSON — OAuth client secrets JSON is required when access tokens expire in CI." >&2
+          if [ ${#oauth_trim} -eq 0 ]; then
+            echo "Missing GOOGLE_OAUTH_JSON — OAuth client JSON (installed app) needed when access token expires in CI." >&2
             exit 1
           fi
 
@@ -91,8 +101,31 @@ jobs:
 
       - name: Seed OAuth token (Sheets + Drive)
         run: |
-          echo "$GOOGLE_TOKEN_JSON_B64" | base64 --decode > config/credentials.json
-          test -s config/credentials.json || { echo "Decoded credentials empty"; exit 1; }
+          mkdir -p config
+          b64=$(echo -n "$GOOGLE_TOKEN_JSON_B64" | tr -d '[:space:]')
+          if [ -n "$b64" ]; then
+            echo "$b64" | base64 --decode > config/credentials.json
+          else
+            printf '%s' "$GOOGLE_TOKEN_JSON" > config/credentials.json
+          fi
+          python - <<'EOF'
+          import json, pathlib, sys
+          p = pathlib.Path("config/credentials.json")
+          if not p.is_file() or p.stat().st_size == 0:
+              print("credentials empty", file=sys.stderr)
+              sys.exit(1)
+          try:
+              data = json.loads(p.read_text())
+          except json.JSONDecodeError as e:
+              print("credentials not valid JSON", e, file=sys.stderr)
+              sys.exit(1)
+          if not data.get("refresh_token"):
+              print("credentials must include refresh_token (OAuth user token JSON)", file=sys.stderr)
+              sys.exit(1)
+          if not data.get("client_id"):
+              print("credentials must include client_id for token refresh", file=sys.stderr)
+              sys.exit(1)
+          EOF
 
       - name: Run scraper
         working-directory: ${{ github.workspace }}
