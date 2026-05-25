@@ -1,9 +1,8 @@
 # HKRE full scrape — run manually or on a schedule.
 #
 # Repo secrets (Settings → Secrets and variables → Actions → Repository secrets):
-#   EITHER GOOGLE_TOKEN_JSON_B64 — one-line base64 of your local OAuth user JSON (= config/credentials.json),
-#   OR paste that JSON verbatim into GOOGLE_TOKEN_JSON — GitHub must receive it escaped; workflow uses toJSON(...)
-#       so curly braces don't break YAML. Easiest workaround: single-line GOOGLE_TOKEN_JSON_B64 only.
+#   Either GOOGLE_TOKEN_JSON_B64 — one-line base64 of config/credentials.json,
+#   Or     GOOGLE_TOKEN_JSON — paste credentials.json verbatim (recommended; takes priority over B64).
 #   GOOGLE_OAUTH_JSON           — OAuth "installed app" client JSON; raw or base64 (needed when access token expires).
 #
 # Credentials mode (recommended for CI):
@@ -128,24 +127,28 @@ jobs:
                       pass
               return t
 
-          # Prefer base64 first when set; tolerate common mistakes (raw JSON in B64 secret, missing padding).
+          # Prefer GOOGLE_TOKEN_JSON first: users update it often and B64 leftovers break runs badly.
           def write_token_from_sources():
-              raw = coerce_token_text(raw_in)
-              if not b64_clean:
-                  if raw.startswith("{"):
-                      path.write_text(raw)
-                      print("Seeded credentials from GOOGLE_TOKEN_JSON")
-                      return
-                  elif raw:
+              raw = coerce_token_text(raw_in).strip()
+
+              if raw.startswith("{"):
+                  try:
+                      json.loads(raw)
+                  except json.JSONDecodeError as e:
                       print(
-                          "GOOGLE_TOKEN_JSON is set but does not look like OAuth JSON "
-                          '(expected {...} beginning with "{"). Prefer GOOGLE_TOKEN_JSON_B64 '
-                          "(base64 of config/credentials.json).",
+                          f"GOOGLE_TOKEN_JSON is not valid JSON ({e}). Fix the secret body or delete it.",
                           file=sys.stderr,
                       )
                       sys.exit(1)
+                  path.write_text(raw)
+                  print("Seeded credentials from GOOGLE_TOKEN_JSON")
+                  return
+
+              if not b64_clean:
                   print(
-                      "::error ::Fill GOOGLE_TOKEN_JSON with full credentials.json, or GOOGLE_TOKEN_JSON_B64.",
+                      "::error ::Set GOOGLE_TOKEN_JSON to your full OAuth token JSON "
+                      '(single object starting with "{"), or GOOGLE_TOKEN_JSON_B64 only. '
+                      "Delete B64 secret if you only use pasted JSON.",
                       file=sys.stderr,
                   )
                   sys.exit(1)
@@ -190,13 +193,9 @@ jobs:
               if not text.strip().startswith("{"):
                   print(
                       "Decoded GOOGLE_TOKEN_JSON_B64 is not OAuth JSON (should start with '{'). "
-                      "You may have pasted the wrong secret. Trying GOOGLE_TOKEN_JSON fallback if valid.",
+                      "Replace or delete GOOGLE_TOKEN_JSON_B64; use GOOGLE_TOKEN_JSON with full credentials.json.",
                       file=sys.stderr,
                   )
-                  if raw.startswith("{"):
-                      path.write_text(raw)
-                      print("Seeded credentials from GOOGLE_TOKEN_JSON (fallback)")
-                      return
                   sys.exit(1)
 
               path.write_text(text)
@@ -204,11 +203,12 @@ jobs:
 
           write_token_from_sources()
 
-          blob = path.read_text()
+          blob = path.read_text(encoding="utf-8").strip("\ufeff")
           if not blob.strip():
               print(
-                  "credentials empty — paste raw credentials.json into GOOGLE_TOKEN_JSON, "
-                  "or put base64 in GOOGLE_TOKEN_JSON_B64 only (not raw JSON in B64).",
+                  "credentials empty after seed — GitHub Actions did not supply token text. "
+                  "Use GOOGLE_TOKEN_JSON (paste full credentials.json starting with '{'). "
+                  "Delete leftover GOOGLE_TOKEN_JSON_B64 if you are not using base64.",
                   file=sys.stderr,
               )
               sys.exit(1)
@@ -218,8 +218,8 @@ jobs:
               print(
                   "credentials not valid JSON:",
                   e,
-                  "| Use GOOGLE_TOKEN_JSON_B64 = base64 of config/credentials.json (recommended), "
-                  "or paste the full JSON object in GOOGLE_TOKEN_JSON (must start with {).",
+                  "| Prefer GOOGLE_TOKEN_JSON = paste full config/credentials.json, "
+                  "or GOOGLE_TOKEN_JSON_B64 if you base64-encoded that file.",
                   file=sys.stderr,
               )
               sys.exit(1)
