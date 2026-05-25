@@ -128,34 +128,81 @@ jobs:
                       pass
               return t
 
-          # Prefer base64 first (single line, fewer GH/YAML quirks).
-          if b64_clean:
-              try:
-                  decoded = base64.b64decode(b64_clean)
-              except Exception as e:
-                  print(f"GOOGLE_TOKEN_JSON_B64 is not valid base64: {e}", file=sys.stderr)
-                  sys.exit(1)
-              path.write_bytes(decoded)
-              print("Seeded credentials from GOOGLE_TOKEN_JSON_B64")
-          else:
+          # Prefer base64 first when set; tolerate common mistakes (raw JSON in B64 secret, missing padding).
+          def write_token_from_sources():
               raw = coerce_token_text(raw_in)
-              if raw.startswith("{"):
-                  path.write_text(raw)
-                  print("Seeded credentials from GOOGLE_TOKEN_JSON")
-              elif raw:
-                  print(
-                      "GOOGLE_TOKEN_JSON is set but does not look like OAuth JSON "
-                      '(expected {...} beginning with "{"). Prefer GOOGLE_TOKEN_JSON_B64 '
-                      "(base64 of config/credentials.json).",
-                      file=sys.stderr,
-                  )
-                  sys.exit(1)
-              else:
+              if not b64_clean:
+                  if raw.startswith("{"):
+                      path.write_text(raw)
+                      print("Seeded credentials from GOOGLE_TOKEN_JSON")
+                      return
+                  elif raw:
+                      print(
+                          "GOOGLE_TOKEN_JSON is set but does not look like OAuth JSON "
+                          '(expected {...} beginning with "{"). Prefer GOOGLE_TOKEN_JSON_B64 '
+                          "(base64 of config/credentials.json).",
+                          file=sys.stderr,
+                      )
+                      sys.exit(1)
                   print(
                       "::error ::Fill GOOGLE_TOKEN_JSON with full credentials.json, or GOOGLE_TOKEN_JSON_B64.",
                       file=sys.stderr,
                   )
                   sys.exit(1)
+
+              if b64_clean.startswith("{"):
+                  path.write_text(b64_clean)
+                  print(
+                      "Seeded from GOOGLE_TOKEN_JSON_B64 (value is raw JSON, not base64 — use GOOGLE_TOKEN_JSON next time).",
+                      flush=True,
+                  )
+                  return
+
+              padded = b64_clean + "=" * ((-len(b64_clean)) % 4)
+              try:
+                  # Standard Gmail-style base64; validate=False ignores minor padding noise.
+                  decoded = base64.b64decode(padded, validate=False)
+              except Exception as e:
+                  try:
+                      decoded = base64.urlsafe_b64decode(padded.replace("-", "+").replace("_", "/"))
+                  except Exception as e2:
+                      print(
+                          f"GOOGLE_TOKEN_JSON_B64 is not valid base64 ({e} / {e2}). "
+                          "Use real base64 of config/credentials.json, or paste full JSON into GOOGLE_TOKEN_JSON.",
+                          file=sys.stderr,
+                      )
+                      sys.exit(1)
+
+              if not decoded:
+                  print(
+                      "GOOGLE_TOKEN_JSON_B64 decoded to empty bytes (wrong value or only padding). "
+                      "Put real base64 of credentials.json here, or use GOOGLE_TOKEN_JSON for raw {…} JSON.",
+                      file=sys.stderr,
+                  )
+                  sys.exit(1)
+
+              try:
+                  text = decoded.decode("utf-8")
+              except UnicodeDecodeError as e:
+                  print(f"Decoded blob is not UTF-8 ({e}). Replace GOOGLE_TOKEN_JSON_B64.", file=sys.stderr)
+                  sys.exit(1)
+
+              if not text.strip().startswith("{"):
+                  print(
+                      "Decoded GOOGLE_TOKEN_JSON_B64 is not OAuth JSON (should start with '{'). "
+                      "You may have pasted the wrong secret. Trying GOOGLE_TOKEN_JSON fallback if valid.",
+                      file=sys.stderr,
+                  )
+                  if raw.startswith("{"):
+                      path.write_text(raw)
+                      print("Seeded credentials from GOOGLE_TOKEN_JSON (fallback)")
+                      return
+                  sys.exit(1)
+
+              path.write_text(text)
+              print("Seeded credentials from GOOGLE_TOKEN_JSON_B64")
+
+          write_token_from_sources()
 
           blob = path.read_text()
           if not blob.strip():
