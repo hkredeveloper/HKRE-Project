@@ -52,6 +52,11 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
+      - name: Workflow revision (oauth seed prefers GOOGLE_TOKEN_JSON)
+        run: |
+          echo "HKRE_CI_MARKER=oauth-seed-prefer-token-json ref=${GITHUB_REF} sha=${GITHUB_SHA}"
+          echo "If the seed step fails with old messages (no 'credentials empty after seed'), you are not on latest main."
+
       - name: Validate secrets for OAuth Sheets mode
         env:
           TOKEN_B64: ${{ toJSON(secrets.GOOGLE_TOKEN_JSON_B64 || '') }}
