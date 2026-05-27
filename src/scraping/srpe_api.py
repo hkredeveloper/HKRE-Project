@@ -1113,14 +1113,25 @@ def main_api(
         except Exception as exc:
             err_name = type(exc).__name__
             err_msg = str(exc).split("\n")[0].strip()
-            update_log(
-                docs,
-                f"Error at dev_id {dev_id} (index {idx}): {err_name}: {err_msg}\n"
-                f"Retrying same dev.\n\n",
-            )
+            try:
+                update_log(
+                    docs,
+                    f"Error at dev_id {dev_id} (index {idx}): {err_name}: {err_msg}\n"
+                    f"Retrying same dev.\n\n",
+                )
+            except Exception:
+                _log.warning(
+                    "Could not append Docs log for dev_id=%s idx=%s (continuing retry loop)",
+                    dev_id,
+                    idx,
+                    exc_info=True,
+                )
             _log.warning("Unhandled error at dev_id=%s idx=%s: %s", dev_id, idx, exc)
             time.sleep(5)
             continue
 
-    update_log(docs, f"Total time: {(time.time() - tl_loop) / 60:.2f} min\n\n")
+    try:
+        update_log(docs, f"Total time: {(time.time() - tl_loop) / 60:.2f} min\n\n")
+    except Exception:
+        _log.warning("Could not append total time to Docs log", exc_info=True)
     return idx

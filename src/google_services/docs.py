@@ -3,11 +3,15 @@ Google Docs Operations Module
 Handles logging operations in Google Docs
 """
 
+import logging
 import os
 import random
+import ssl
 import time
 
 from googleapiclient.errors import HttpError
+
+_log = logging.getLogger(__name__)
 
 # Google Docs quotas are strict (often ~60 write requests/min per user). Each update_log
 # issues documents.get + batchUpdate; scraping can exceed that burst without throttling/retry.
@@ -92,3 +96,19 @@ def update_log(docs, text):
                 time.sleep(min(wait, 120))
                 continue
             raise
+
+        except (ssl.SSLError, TimeoutError, ConnectionError, BrokenPipeError) as e:
+            # Never let flaky TLS/network to Google (incl. token refresh) kill long scrapes.
+            if attempt < 11:
+                wait = backoff * (2**attempt) + random.uniform(0.5, 2.5)
+                _log.warning(
+                    "update_log: transient TLS/network (%s: %s), retry %s/12 after %.1fs",
+                    type(e).__name__,
+                    e,
+                    attempt + 1,
+                    wait,
+                )
+                time.sleep(min(wait, 120))
+                continue
+            _log.error("update_log: gave up after TLS/network errors", exc_info=True)
+            return None
