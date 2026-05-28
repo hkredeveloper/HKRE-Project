@@ -78,11 +78,11 @@ if __name__ == "__main__":
     non_t18ms_folder_id = create_drive_folder('non-t18m files', parent_id=folder_id)
     update_log(
         docs,
-        f"Date of Scrape: {today_date}\nFor non-t18m only (resume from development index 453)\n\n",
+        f"Date of Scrape: {today_date}\nFor non-t18m only (resume from development index 514)\n\n",
     )
 
     non_t18m_dev_ids = list_dev_ids(version="non-t18m")
-    NON_T18M_START_INDEX = 453  # 1-based index into SRPE listing order (manual resume cursor)
+    NON_T18M_START_INDEX = 514  # 1-based index into SRPE listing order (manual resume cursor)
     main_api(
         version="non-t18m",
         run_folder_id=non_t18ms_folder_id,
