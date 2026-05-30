@@ -21,9 +21,9 @@ name: HKRE Scraper
 
 on:
   workflow_dispatch:
-  # Weekly run — edit cron to suit your timezone (times are UTC).
+  # Weekly full run — GitHub cron is UTC. Sunday 02:00 HKT = Saturday 18:00 UTC.
   schedule:
-    - cron: "0 18 * * 0" # Sundays 18:00 UTC
+    - cron: "0 18 * * 6"
 
 permissions:
   contents: read
