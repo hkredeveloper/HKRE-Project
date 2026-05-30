@@ -52,41 +52,37 @@ if __name__ == "__main__":
     )
     devm_lookup = build_lookup_index(combined_df)
 
-    # # Create subfolder for t18m files
-    # t18ms_folder_id = create_drive_folder('t18m files', parent_id=folder_id)
-    #
-    # # ============================================================================
-    # # Scrape t18m properties
-    # # ============================================================================
-    # update_log(docs, f"Date of Scrape: {today_date}\nFor t18m\n\n")
-    # t18m_dev_ids = list_dev_ids(version="t18m")
-    # main_api(
-    #     version="t18m",
-    #     run_folder_id=t18ms_folder_id,
-    #     start_idx=1,
-    #     sheet=sheet_t18m,
-    #     devm_lookup=devm_lookup,
-    #     drive_service=drive_service,
-    #     docs=docs,
-    #     dev_ids=t18m_dev_ids,
-    # )
-    # update_log(docs, "finished t18m\n\n")
+    # Create subfolder for t18m files
+    t18ms_folder_id = create_drive_folder('t18m files', parent_id=folder_id)
+
+    # ============================================================================
+    # Scrape t18m properties
+    # ============================================================================
+    update_log(docs, f"Date of Scrape: {today_date}\nFor t18m\n\n")
+    t18m_dev_ids = list_dev_ids(version="t18m")
+    main_api(
+        version="t18m",
+        run_folder_id=t18ms_folder_id,
+        start_idx=1,
+        sheet=sheet_t18m,
+        devm_lookup=devm_lookup,
+        drive_service=drive_service,
+        docs=docs,
+        dev_ids=t18m_dev_ids,
+    )
+    update_log(docs, "finished t18m\n\n")
 
     # ============================================================================
     # Scrape non-t18m properties
     # ============================================================================
     non_t18ms_folder_id = create_drive_folder('non-t18m files', parent_id=folder_id)
-    update_log(
-        docs,
-        f"Date of Scrape: {today_date}\nFor non-t18m only (resume from development index 514)\n\n",
-    )
+    update_log(docs, f"For non-t18m\n\n")
 
     non_t18m_dev_ids = list_dev_ids(version="non-t18m")
-    NON_T18M_START_INDEX = 514  # 1-based index into SRPE listing order (manual resume cursor)
     main_api(
         version="non-t18m",
         run_folder_id=non_t18ms_folder_id,
-        start_idx=NON_T18M_START_INDEX,
+        start_idx=1,
         sheet=sheet_non_t18m,
         devm_lookup=devm_lookup,
         drive_service=drive_service,
