@@ -126,9 +126,8 @@ def _load_creds():
             except Exception:
                 # Refresh failed, need full re-authentication
                 creds = None
-        
         # Full OAuth flow required if refresh didn't work or no token exists
-       if not creds:
+        if not creds:
             # Browser OAuth is impossible in CI — fail with an actionable message
             if os.getenv("CI") or os.getenv("GITHUB_ACTIONS"):
                 raise EnvironmentError(
@@ -142,7 +141,6 @@ def _load_creds():
                     "print(creds.to_json())\"\n"
                     "Then paste the output into the GOOGLE_TOKEN_JSON GitHub secret."
                 )
-
             raw = os.getenv("GOOGLE_OAUTH_JSON")
             if not raw:
                 raise EnvironmentError("GOOGLE_OAUTH_JSON missing for OAuth re-auth")
