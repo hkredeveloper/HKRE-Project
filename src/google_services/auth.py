@@ -128,11 +128,25 @@ def _load_creds():
                 creds = None
         
         # Full OAuth flow required if refresh didn't work or no token exists
-        if not creds:
+       if not creds:
+            # Browser OAuth is impossible in CI — fail with an actionable message
+            if os.getenv("CI") or os.getenv("GITHUB_ACTIONS"):
+                raise EnvironmentError(
+                    "OAuth token is missing or its refresh_token is expired/revoked. "
+                    "Regenerate config/credentials.json locally with:\n"
+                    "  python -c \"from google_auth_oauthlib.flow import InstalledAppFlow; "
+                    "creds = InstalledAppFlow.from_client_secrets_file('config/oauth_client.json', "
+                    "['https://www.googleapis.com/auth/drive', "
+                    "'https://www.googleapis.com/auth/spreadsheets', "
+                    "'https://www.googleapis.com/auth/documents']).run_local_server(port=0); "
+                    "print(creds.to_json())\"\n"
+                    "Then paste the output into the GOOGLE_TOKEN_JSON GitHub secret."
+                )
+
             raw = os.getenv("GOOGLE_OAUTH_JSON")
             if not raw:
                 raise EnvironmentError("GOOGLE_OAUTH_JSON missing for OAuth re-auth")
-            
+
             # Parse OAuth config (supports both base64-encoded and raw JSON)
             try:
                 client_cfg = json.loads(base64.b64decode(raw).decode("utf-8"))
