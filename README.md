@@ -62,3 +62,10 @@ HKRE App/
 - **Other:** requests, python-dotenv  
 
 Java is required separately for Tabula-based PDF conversion.
+
+## Notes for Future RAs:
+
+### If Github Action Fails:
+- Check the API keys, they might have expired. 
+### If Github Action did not run: 
+- Check if Github Action has been disabled. Github Actions automatically disables after 60 days of inactivity. 
